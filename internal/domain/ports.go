@@ -32,3 +32,24 @@ type DetectedModule struct {
 	Layers []string `json:"layers"`
 	Files  []string `json:"files"`
 }
+
+// CodeAnalyzer parses source files and extracts structural information.
+type CodeAnalyzer interface {
+	AnalyzeFile(filePath string) (*AnalyzedFile, error)
+}
+
+// AnalyzedFile holds the structural analysis of a single source file.
+type AnalyzedFile struct {
+	Path       string     `json:"path"`
+	Package    string     `json:"package"`
+	Structs    []string   `json:"structs,omitempty"`
+	Functions  []Function `json:"functions,omitempty"`
+	Interfaces []string   `json:"interfaces,omitempty"`
+	Imports    []string   `json:"imports,omitempty"`
+}
+
+// Function represents a function or method extracted from source.
+type Function struct {
+	Name     string `json:"name"`
+	Receiver string `json:"receiver,omitempty"`
+}
