@@ -55,3 +55,30 @@ func TestFileScanner_TestFilesAreSubsetOfGoFiles(t *testing.T) {
 		assert.True(t, goFileSet[tf], "test file %s should be in GoFiles", tf)
 	}
 }
+
+func TestFileScanner_ExcludesTestdata(t *testing.T) {
+	// Scan the project root which contains testdata/
+	s := scanner.New()
+	result, err := s.Scan("../../../..")
+	require.NoError(t, err)
+
+	for _, f := range result.GoFiles {
+		assert.NotContains(t, f, "testdata/", "should exclude testdata/ from Go files: %s", f)
+	}
+	for _, f := range result.AllFiles {
+		assert.NotContains(t, f, "testdata/", "should exclude testdata/ from all files: %s", f)
+	}
+}
+
+func TestFileScanner_AIContextOnlyFromRoot(t *testing.T) {
+	// The perfect fixture has CLAUDE.md and .cursorrules,
+	// but when scanning the project root, those should not
+	// cause HasClaudeMD=true (they're in testdata/, not root).
+	s := scanner.New()
+	result, err := s.Scan("../../../..")
+	require.NoError(t, err)
+
+	// The project root does NOT have CLAUDE.md or .cursorrules
+	assert.False(t, result.HasClaudeMD, "should not detect CLAUDE.md from testdata/")
+	assert.False(t, result.HasCursorRules, "should not detect .cursorrules from testdata/")
+}

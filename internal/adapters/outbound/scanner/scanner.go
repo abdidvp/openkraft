@@ -14,6 +14,7 @@ var skipDirs = map[string]bool{
 	".git":         true,
 	"dist":         true,
 	"bin":          true,
+	"testdata":     true,
 }
 
 // FileScanner implements domain.ProjectScanner by walking the filesystem.
@@ -48,15 +49,19 @@ func (s *FileScanner) Scan(projectPath string) (*domain.ScanResult, error) {
 		relPath, _ := filepath.Rel(absPath, path)
 		result.AllFiles = append(result.AllFiles, relPath)
 
+		// Detect root-level marker files (only in project root, not subdirs)
+		dir := filepath.Dir(relPath)
+		isRoot := dir == "."
+
 		switch {
-		case d.Name() == "go.mod":
+		case d.Name() == "go.mod" && isRoot:
 			result.HasGoMod = true
 			result.Language = "go"
-		case d.Name() == "CLAUDE.md":
+		case d.Name() == "CLAUDE.md" && isRoot:
 			result.HasClaudeMD = true
-		case d.Name() == ".cursorrules":
+		case d.Name() == ".cursorrules" && isRoot:
 			result.HasCursorRules = true
-		case d.Name() == "AGENTS.md":
+		case d.Name() == "AGENTS.md" && isRoot:
 			result.HasAgentsMD = true
 		case d.Name() == ".github" || strings.HasPrefix(relPath, ".github/"):
 			result.HasCIConfig = true
