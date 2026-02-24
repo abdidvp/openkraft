@@ -134,6 +134,27 @@ type Blueprint struct {
 	Patterns      []string        `json:"patterns,omitempty"`
 }
 
+// CheckReport holds the result of comparing a module against a blueprint.
+type CheckReport struct {
+	Module            string        `json:"module"`
+	GoldenModule      string        `json:"golden_module"`
+	Score             int           `json:"score"`
+	MissingFiles      []MissingItem `json:"missing_files"`
+	MissingStructs    []MissingItem `json:"missing_structs"`
+	MissingMethods    []MissingItem `json:"missing_methods"`
+	MissingInterfaces []MissingItem `json:"missing_interfaces"`
+	PatternViolations []MissingItem `json:"pattern_violations"`
+	Issues            []Issue       `json:"issues"`
+}
+
+// MissingItem describes a single missing structural element.
+type MissingItem struct {
+	Name        string `json:"name"`
+	Expected    string `json:"expected"`
+	File        string `json:"file,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 // BlueprintFile describes a file pattern within a blueprint.
 type BlueprintFile struct {
 	PathPattern        string   `json:"path_pattern"`
