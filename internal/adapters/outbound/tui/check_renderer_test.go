@@ -48,9 +48,9 @@ func TestRenderCheckReport_ContainsGoldenModule(t *testing.T) {
 	assert.Contains(t, output, "tax")
 }
 
-func TestRenderCheckReport_ContainsMissingFilesHeader(t *testing.T) {
+func TestRenderCheckReport_ContainsMissingFilesSection(t *testing.T) {
 	output := tui.RenderCheckReport(sampleCheckReport())
-	assert.Contains(t, output, "MISSING FILES")
+	assert.Contains(t, output, "Missing Files")
 }
 
 func TestRenderCheckReport_ContainsMissingFileNames(t *testing.T) {
@@ -61,13 +61,13 @@ func TestRenderCheckReport_ContainsMissingFileNames(t *testing.T) {
 
 func TestRenderCheckReport_ContainsMissingStructs(t *testing.T) {
 	output := tui.RenderCheckReport(sampleCheckReport())
-	assert.Contains(t, output, "MISSING STRUCTURES")
+	assert.Contains(t, output, "Missing Structures")
 	assert.Contains(t, output, "Validate() error")
 }
 
 func TestRenderCheckReport_ContainsPatternViolations(t *testing.T) {
 	output := tui.RenderCheckReport(sampleCheckReport())
-	assert.Contains(t, output, "PATTERN VIOLATIONS")
+	assert.Contains(t, output, "Pattern Violations")
 	assert.Contains(t, output, "No repository with getQuerier pattern")
 }
 
@@ -80,20 +80,19 @@ func TestRenderCheckReport_EmptyReport(t *testing.T) {
 	output := tui.RenderCheckReport(report)
 	assert.Contains(t, output, "empty")
 	assert.Contains(t, output, "100")
-	// Should not contain section headers when there are no items
-	assert.NotContains(t, output, "MISSING FILES")
-	assert.NotContains(t, output, "MISSING STRUCTURES")
-	assert.NotContains(t, output, "PATTERN VIOLATIONS")
+	assert.NotContains(t, output, "Missing Files")
+	assert.NotContains(t, output, "Missing Structures")
+	assert.NotContains(t, output, "Pattern Violations")
 }
 
 func TestRenderCheckReport_ContainsMissingMethods(t *testing.T) {
 	output := tui.RenderCheckReport(sampleCheckReport())
-	assert.Contains(t, output, "MISSING METHODS")
+	assert.Contains(t, output, "Missing Methods")
 	assert.Contains(t, output, "GetByID")
 }
 
 func TestRenderCheckReport_ContainsMissingInterfaces(t *testing.T) {
 	output := tui.RenderCheckReport(sampleCheckReport())
-	assert.Contains(t, output, "MISSING INTERFACES")
+	assert.Contains(t, output, "Missing Interfaces")
 	assert.Contains(t, output, "PaymentRepository")
 }

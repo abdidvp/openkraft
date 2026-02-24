@@ -9,134 +9,68 @@ import (
 )
 
 var (
-	sectionHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#ffcc00"))
-
-	missingFileStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#ff4444"))
-
-	warningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#ff9900"))
-
-	hintStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666")).
-			Italic(true)
+	sectionHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	warningItemStyle   = lipgloss.NewStyle().Foreground(warning)
+	hintStyle          = lipgloss.NewStyle().Foreground(dim).Italic(true)
 )
 
 // RenderCheckReport renders a CheckReport as a styled TUI string.
 func RenderCheckReport(report *domain.CheckReport) string {
 	var b strings.Builder
 
-	// Header box with module name, score, and golden module
+	// Header
 	grade := domain.GradeFor(report.Score)
-	scoreColor := gradeColor(grade)
-
-	scoreText := lipgloss.NewStyle().
+	scoreStyled := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(scoreColor).
-		Render(fmt.Sprintf("Score: %d/100", report.Score))
+		Foreground(gradeColor(grade)).
+		Render(fmt.Sprintf("%d/100  %s", report.Score, grade))
 
-	moduleLine := fmt.Sprintf("Module: %s — %s", report.Module, scoreText)
-	goldenLine := fmt.Sprintf("Golden module: %s", report.GoldenModule)
+	moduleLine := titleStyle.Render(report.Module) + "  " + scoreStyled
+	goldenLine := dimStyle.Render(fmt.Sprintf("vs golden: %s", report.GoldenModule))
 
-	box := boxStyle.Render(moduleLine + "\n" + goldenLine)
-	b.WriteString(box)
+	b.WriteString(boxStyle.Render(moduleLine + "\n" + goldenLine))
 	b.WriteString("\n")
 
-	// Missing Files
-	if len(report.MissingFiles) > 0 {
-		b.WriteString("\n")
-		header := sectionHeaderStyle.Render(
-			fmt.Sprintf("  MISSING FILES (%d):", len(report.MissingFiles)))
-		b.WriteString(header)
-		b.WriteString("\n")
-		for _, item := range report.MissingFiles {
-			line := missingFileStyle.Render(
-				fmt.Sprintf("  ✗ %-34s", item.Name))
-			if item.Expected != "" {
-				line += dimStyle.Render(fmt.Sprintf(" (expected: %s)", item.Expected))
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
+	renderMissingSection(&b, "Missing Files", report.MissingFiles, true)
+	renderMissingSection(&b, "Missing Structures", report.MissingStructs, false)
+	renderMissingSection(&b, "Missing Methods", report.MissingMethods, false)
+	renderMissingSection(&b, "Missing Interfaces", report.MissingInterfaces, false)
+	renderMissingSection(&b, "Pattern Violations", report.PatternViolations, false)
 
-	// Missing Structures
-	if len(report.MissingStructs) > 0 {
-		b.WriteString("\n")
-		header := sectionHeaderStyle.Render(
-			fmt.Sprintf("  MISSING STRUCTURES (%d):", len(report.MissingStructs)))
-		b.WriteString(header)
-		b.WriteString("\n")
-		for _, item := range report.MissingStructs {
-			line := warningStyle.Render("  ⚠ ")
-			if item.File != "" {
-				line += fmt.Sprintf("%s — Missing: %s", item.File, item.Name)
-			} else {
-				line += item.Name
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
-
-	// Missing Methods
-	if len(report.MissingMethods) > 0 {
-		b.WriteString("\n")
-		header := sectionHeaderStyle.Render(
-			fmt.Sprintf("  MISSING METHODS (%d):", len(report.MissingMethods)))
-		b.WriteString(header)
-		b.WriteString("\n")
-		for _, item := range report.MissingMethods {
-			line := warningStyle.Render("  ⚠ ")
-			if item.File != "" {
-				line += fmt.Sprintf("%s — Missing: %s", item.File, item.Name)
-			} else {
-				line += item.Name
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
-
-	// Missing Interfaces
-	if len(report.MissingInterfaces) > 0 {
-		b.WriteString("\n")
-		header := sectionHeaderStyle.Render(
-			fmt.Sprintf("  MISSING INTERFACES (%d):", len(report.MissingInterfaces)))
-		b.WriteString(header)
-		b.WriteString("\n")
-		for _, item := range report.MissingInterfaces {
-			line := warningStyle.Render("  ⚠ ")
-			if item.File != "" {
-				line += fmt.Sprintf("%s — Missing: %s", item.File, item.Name)
-			} else {
-				line += item.Name
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
-
-	// Pattern Violations
-	if len(report.PatternViolations) > 0 {
-		b.WriteString("\n")
-		header := sectionHeaderStyle.Render(
-			fmt.Sprintf("  PATTERN VIOLATIONS (%d):", len(report.PatternViolations)))
-		b.WriteString(header)
-		b.WriteString("\n")
-		for _, item := range report.PatternViolations {
-			line := warningStyle.Render("  ⚠ ") + item.Name
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
-
-	// Footer hint
+	// Footer
 	b.WriteString("\n")
-	b.WriteString(hintStyle.Render("  Run with an AI agent (Claude Code + MCP) to fix automatically."))
+	b.WriteString("  " + hintStyle.Render("Use openkraft MCP server with Claude Code to fix automatically."))
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func renderMissingSection(b *strings.Builder, title string, items []domain.MissingItem, isFile bool) {
+	if len(items) == 0 {
+		return
+	}
+
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  %s %s\n",
+		sectionHeaderStyle.Render(title),
+		dimStyle.Render(fmt.Sprintf("(%d)", len(items))),
+	))
+
+	for _, item := range items {
+		if isFile {
+			line := fmt.Sprintf("    %s %s", failStyle.Render("●"), item.Name)
+			if item.Expected != "" {
+				line += "  " + faintStyle.Render(item.Expected)
+			}
+			b.WriteString(line + "\n")
+		} else {
+			line := fmt.Sprintf("    %s ", warningItemStyle.Render("●"))
+			if item.File != "" {
+				line += fileStyle.Render(item.File) + "  " + item.Name
+			} else {
+				line += item.Name
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 }

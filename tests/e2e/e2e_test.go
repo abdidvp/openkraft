@@ -55,7 +55,7 @@ func TestE2E_Score(t *testing.T) {
 	out, code := run(t, "score", fixturePath("perfect"))
 	defer os.RemoveAll(filepath.Join(fixturePath("perfect"), ".openkraft"))
 	assert.Equal(t, 0, code)
-	assert.Contains(t, out, "OpenKraft")
+	assert.Contains(t, out, "openkraft")
 	assert.Contains(t, out, "100")
 }
 
@@ -119,6 +119,76 @@ func TestE2E_CheckJSON(t *testing.T) {
 	err := json.Unmarshal([]byte(out), &report)
 	require.NoError(t, err)
 	assert.Equal(t, "payments", report.Module)
+}
+
+// --- Init Tests ---
+
+func TestE2E_Init(t *testing.T) {
+	tmpDir := t.TempDir()
+	out, code := run(t, "init", tmpDir, "--type", "cli-tool")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "Created")
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".openkraft.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "project_type: cli-tool")
+}
+
+func TestE2E_InitAlreadyExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".openkraft.yaml"), []byte("old"), 0644))
+
+	_, code := run(t, "init", tmpDir)
+	assert.Equal(t, 1, code, "should fail when config already exists")
+}
+
+// --- Config-Aware Score Tests ---
+
+func TestE2E_ScoreWithCLIConfig(t *testing.T) {
+	fp := fixturePath("perfect")
+	cfgPath := filepath.Join(fp, ".openkraft.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("project_type: cli-tool\n"), 0644))
+	defer os.Remove(cfgPath)
+	defer os.RemoveAll(filepath.Join(fp, ".openkraft"))
+
+	out, code := run(t, "score", fp, "--json")
+	assert.Equal(t, 0, code)
+
+	var score domain.Score
+	require.NoError(t, json.Unmarshal([]byte(out), &score))
+
+	// CLI config should include applied_config
+	assert.NotNil(t, score.AppliedConfig)
+	assert.Equal(t, "cli-tool", string(score.AppliedConfig.ProjectType))
+
+	// Weights should reflect CLI defaults (conventions=0.25, patterns=0.10)
+	for _, cat := range score.Categories {
+		if cat.Name == "conventions" {
+			assert.InDelta(t, 0.25, cat.Weight, 0.001)
+		}
+		if cat.Name == "patterns" {
+			assert.InDelta(t, 0.10, cat.Weight, 0.001)
+		}
+	}
+}
+
+func TestE2E_ScoreSkippedCategory(t *testing.T) {
+	fp := fixturePath("perfect")
+	cfgPath := filepath.Join(fp, ".openkraft.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("skip:\n  categories:\n    - ai_context\n"), 0644))
+	defer os.Remove(cfgPath)
+	defer os.RemoveAll(filepath.Join(fp, ".openkraft"))
+
+	out, code := run(t, "score", fp, "--json")
+	assert.Equal(t, 0, code)
+
+	var score domain.Score
+	require.NoError(t, json.Unmarshal([]byte(out), &score))
+
+	assert.Len(t, score.Categories, 5, "should have 5 categories when ai_context is skipped")
+	for _, cat := range score.Categories {
+		assert.NotEqual(t, "ai_context", cat.Name)
+	}
 }
 
 // --- Version Test ---

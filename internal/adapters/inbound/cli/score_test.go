@@ -63,7 +63,7 @@ func TestScoreCommand_DefaultTUI(t *testing.T) {
 	cmd.SetOut(buf)
 	cmd.SetArgs([]string{"score", fixtureDir})
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, buf.String(), "OpenKraft")
+	assert.Contains(t, buf.String(), "openkraft")
 	assert.Contains(t, buf.String(), "100")
 }
 
