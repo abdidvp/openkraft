@@ -125,3 +125,22 @@ type ModuleFile struct {
 	Interfaces   []string `json:"interfaces,omitempty"`
 	Imports      []string `json:"imports,omitempty"`
 }
+
+// Blueprint represents the structural template extracted from a golden module.
+type Blueprint struct {
+	Name          string          `json:"name"`
+	ExtractedFrom string          `json:"extracted_from"`
+	Files         []BlueprintFile `json:"files"`
+	Patterns      []string        `json:"patterns,omitempty"`
+}
+
+// BlueprintFile describes a file pattern within a blueprint.
+type BlueprintFile struct {
+	PathPattern        string   `json:"path_pattern"`
+	Type               string   `json:"type"`
+	Required           bool     `json:"required"`
+	RequiredStructs    []string `json:"required_structs,omitempty"`
+	RequiredFunctions  []string `json:"required_functions,omitempty"`
+	RequiredMethods    []string `json:"required_methods,omitempty"`
+	RequiredInterfaces []string `json:"required_interfaces,omitempty"`
+}
