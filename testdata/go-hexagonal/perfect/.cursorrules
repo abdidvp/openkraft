@@ -1,0 +1,9 @@
+You are working on a Go hexagonal architecture project.
+
+Follow these rules:
+- Domain layer has zero external dependencies
+- All business logic lives in domain layer
+- Adapters implement port interfaces
+- Use constructor injection
+- Every entity needs Validate() error method
+- Use table-driven tests
