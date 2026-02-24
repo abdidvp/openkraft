@@ -79,6 +79,44 @@ func progressBar(score, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
+// RenderHistory formats score history for terminal output.
+func RenderHistory(entries []domain.ScoreEntry) string {
+	if len(entries) == 0 {
+		return "  No score history found.\n"
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(headerStyle.Render("Score History"))
+	b.WriteString("\n\n")
+
+	for i, e := range entries {
+		hash := e.CommitHash
+		if len(hash) > 7 {
+			hash = hash[:7]
+		}
+		if hash == "" {
+			hash = "-------"
+		}
+
+		line := fmt.Sprintf("  %s  %s  %d/100  %s", e.Timestamp[:10], hash, e.Overall, e.Grade)
+
+		if i > 0 {
+			diff := e.Overall - entries[i-1].Overall
+			if diff > 0 {
+				line += fmt.Sprintf("  ↑%d", diff)
+			} else if diff < 0 {
+				line += fmt.Sprintf("  ↓%d", -diff)
+			}
+		}
+
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 func gradeColor(grade string) lipgloss.Color {
 	if c, ok := gradeColors[grade]; ok {
 		return c

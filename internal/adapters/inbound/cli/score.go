@@ -3,8 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
+	"github.com/openkraft/openkraft/internal/adapters/outbound/gitinfo"
+	"github.com/openkraft/openkraft/internal/adapters/outbound/history"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/tui"
@@ -15,10 +19,11 @@ import (
 
 func newScoreCmd() *cobra.Command {
 	var (
-		jsonOutput bool
-		ciMode     bool
-		minScore   int
-		badge      bool
+		jsonOutput  bool
+		ciMode      bool
+		minScore    int
+		badge       bool
+		showHistory bool
 	)
 
 	cmd := &cobra.Command{
@@ -32,15 +37,46 @@ func newScoreCmd() *cobra.Command {
 				path = args[0]
 			}
 
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				return fmt.Errorf("resolving path: %w", err)
+			}
+
 			svc := application.NewScoreService(
 				scanner.New(),
 				detector.New(),
 				parser.New(),
 			)
 
-			score, err := svc.ScoreProject(path)
+			score, err := svc.ScoreProject(absPath)
 			if err != nil {
 				return fmt.Errorf("scoring failed: %w", err)
+			}
+
+			// Attach git commit hash if available
+			gi := gitinfo.New()
+			if hash, err := gi.CommitHash(absPath); err == nil {
+				score.CommitHash = hash
+			}
+
+			// Save to history
+			hist := history.New()
+			entry := domain.ScoreEntry{
+				Timestamp:  time.Now().Format(time.RFC3339),
+				CommitHash: score.CommitHash,
+				Overall:    score.Overall,
+				Grade:      score.Grade(),
+			}
+			_ = hist.Save(absPath, entry) // best-effort
+
+			// Show history if requested
+			if showHistory {
+				entries, err := hist.Load(absPath)
+				if err != nil {
+					return fmt.Errorf("loading history: %w", err)
+				}
+				fmt.Fprint(cmd.OutOrStdout(), tui.RenderHistory(entries))
+				return nil
 			}
 
 			switch {
@@ -64,6 +100,7 @@ func newScoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&ciMode, "ci", false, "CI mode: exit 1 if below --min")
 	cmd.Flags().IntVar(&minScore, "min", 0, "Minimum score for CI mode")
 	cmd.Flags().BoolVar(&badge, "badge", false, "Output shields.io badge URL")
+	cmd.Flags().BoolVar(&showHistory, "history", false, "Show score history")
 
 	return cmd
 }

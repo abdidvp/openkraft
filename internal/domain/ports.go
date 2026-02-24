@@ -53,3 +53,23 @@ type Function struct {
 	Name     string `json:"name"`
 	Receiver string `json:"receiver,omitempty"`
 }
+
+// GitInfo provides git metadata for the current project.
+type GitInfo interface {
+	CommitHash(projectPath string) (string, error)
+	IsGitRepo(projectPath string) bool
+}
+
+// ScoreHistory persists and retrieves historical scores.
+type ScoreHistory interface {
+	Save(projectPath string, entry ScoreEntry) error
+	Load(projectPath string) ([]ScoreEntry, error)
+}
+
+// ScoreEntry represents a single historical score record.
+type ScoreEntry struct {
+	Timestamp  string `json:"timestamp"`
+	CommitHash string `json:"commit_hash,omitempty"`
+	Overall    int    `json:"overall"`
+	Grade      string `json:"grade"`
+}
