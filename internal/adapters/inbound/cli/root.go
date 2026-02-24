@@ -16,6 +16,7 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newScoreCmd())
 	return cmd
 }
 
