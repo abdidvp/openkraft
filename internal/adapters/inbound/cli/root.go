@@ -17,6 +17,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newScoreCmd())
+	cmd.AddCommand(newCheckCmd())
 	return cmd
 }
 
