@@ -19,3 +19,16 @@ type ScanResult struct {
 	HasOpenKraftDir bool     `json:"has_openkraft_dir"`
 	HasCIConfig     bool     `json:"has_ci_config"`
 }
+
+// ModuleDetector detects module boundaries from scan results.
+type ModuleDetector interface {
+	Detect(scan *ScanResult) ([]DetectedModule, error)
+}
+
+// DetectedModule represents a module found in the project.
+type DetectedModule struct {
+	Name   string   `json:"name"`
+	Path   string   `json:"path"`
+	Layers []string `json:"layers"`
+	Files  []string `json:"files"`
+}
