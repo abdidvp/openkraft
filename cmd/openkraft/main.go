@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/openkraft/openkraft/internal/cli"
+	"github.com/openkraft/openkraft/internal/adapters/inbound/cli"
 )
 
 func main() {
