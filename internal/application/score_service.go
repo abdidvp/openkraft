@@ -53,10 +53,14 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 		analyzed[f] = af
 	}
 
-	// 4. Run scorers
+	// 4. Run all 6 scorers
 	categories := []domain.CategoryScore{
 		scoring.ScoreArchitecture(modules, scan, analyzed),
+		scoring.ScoreConventions(scan, analyzed),
+		scoring.ScorePatterns(modules, analyzed),
 		scoring.ScoreTests(scan),
+		scoring.ScoreAIContext(scan),
+		scoring.ScoreCompleteness(modules, analyzed),
 	}
 
 	// 5. Compute overall

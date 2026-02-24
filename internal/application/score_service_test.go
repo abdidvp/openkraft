@@ -25,7 +25,7 @@ func TestScoreService_ScoreProject(t *testing.T) {
 
 	assert.True(t, score.Overall > 0, "overall score should be positive")
 	assert.True(t, score.Overall <= 100, "overall score should not exceed 100")
-	assert.Len(t, score.Categories, 2, "should have 2 categories (architecture + tests)")
+	assert.Len(t, score.Categories, 6, "should have 6 categories")
 }
 
 func TestScoreService_CategoriesHaveCorrectWeights(t *testing.T) {
@@ -44,7 +44,11 @@ func TestScoreService_CategoriesHaveCorrectWeights(t *testing.T) {
 	}
 
 	assert.Equal(t, 0.25, weightMap["architecture"])
+	assert.Equal(t, 0.20, weightMap["conventions"])
+	assert.Equal(t, 0.20, weightMap["patterns"])
 	assert.Equal(t, 0.15, weightMap["tests"])
+	assert.Equal(t, 0.10, weightMap["ai_context"])
+	assert.Equal(t, 0.10, weightMap["completeness"])
 }
 
 func TestScoreService_Deterministic(t *testing.T) {
