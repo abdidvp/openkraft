@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
@@ -38,6 +39,7 @@ func newCheckCmd() *cobra.Command {
 				scanner.New(),
 				detector.New(),
 				parser.New(),
+				config.New(),
 			)
 
 			if all {

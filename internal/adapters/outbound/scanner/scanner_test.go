@@ -70,6 +70,17 @@ func TestFileScanner_ExcludesTestdata(t *testing.T) {
 	}
 }
 
+func TestFileScanner_CustomExcludePaths(t *testing.T) {
+	s := scanner.New()
+	// The perfect fixture has internal/ — exclude it
+	result, err := s.Scan(fixtureDir, "internal")
+	require.NoError(t, err)
+
+	for _, f := range result.GoFiles {
+		assert.NotContains(t, f, "internal/", "should exclude internal/ via custom exclude: %s", f)
+	}
+}
+
 func TestFileScanner_AIContextOnlyFromRoot(t *testing.T) {
 	// The perfect fixture has CLAUDE.md and .cursorrules,
 	// but when scanning the project root, those should not

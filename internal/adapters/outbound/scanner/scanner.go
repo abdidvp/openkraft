@@ -24,10 +24,16 @@ func New() *FileScanner {
 	return &FileScanner{}
 }
 
-func (s *FileScanner) Scan(projectPath string) (*domain.ScanResult, error) {
+func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.ScanResult, error) {
 	absPath, err := filepath.Abs(projectPath)
 	if err != nil {
 		return nil, err
+	}
+
+	// Merge extra excludes with built-in skip dirs.
+	extraSkip := make(map[string]bool, len(excludePaths))
+	for _, p := range excludePaths {
+		extraSkip[strings.TrimSuffix(p, "/")] = true
 	}
 
 	result := &domain.ScanResult{
@@ -40,7 +46,7 @@ func (s *FileScanner) Scan(projectPath string) (*domain.ScanResult, error) {
 		}
 
 		if d.IsDir() {
-			if skipDirs[d.Name()] {
+			if skipDirs[d.Name()] || extraSkip[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil

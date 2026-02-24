@@ -11,6 +11,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
@@ -88,8 +89,9 @@ func newServices() (*application.ScoreService, *application.CheckService) {
 	sc := scanner.New()
 	det := detector.New()
 	par := parser.New()
-	return application.NewScoreService(sc, det, par),
-		application.NewCheckService(sc, det, par)
+	cfg := config.New()
+	return application.NewScoreService(sc, det, par, cfg),
+		application.NewCheckService(sc, det, par, cfg)
 }
 
 func handleScore(projectPath string) server.ToolHandlerFunc {

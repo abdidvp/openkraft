@@ -12,28 +12,37 @@ import (
 // CheckService orchestrates the check pipeline:
 // scan -> detect modules -> analyze AST -> select golden -> extract blueprint -> check.
 type CheckService struct {
-	scanner  domain.ProjectScanner
-	detector domain.ModuleDetector
-	analyzer domain.CodeAnalyzer
+	scanner      domain.ProjectScanner
+	detector     domain.ModuleDetector
+	analyzer     domain.CodeAnalyzer
+	configLoader domain.ConfigLoader
 }
 
 func NewCheckService(
 	scanner domain.ProjectScanner,
 	detector domain.ModuleDetector,
 	analyzer domain.CodeAnalyzer,
+	configLoader domain.ConfigLoader,
 ) *CheckService {
 	return &CheckService{
-		scanner:  scanner,
-		detector: detector,
-		analyzer: analyzer,
+		scanner:      scanner,
+		detector:     detector,
+		analyzer:     analyzer,
+		configLoader: configLoader,
 	}
 }
 
 // scanAndAnalyze performs the common scan/detect/analyze steps shared by
 // CheckModule and CheckAll.
 func (s *CheckService) scanAndAnalyze(projectPath string) ([]domain.DetectedModule, map[string]*domain.AnalyzedFile, error) {
+	// 0. Load config for exclude paths
+	cfg, err := s.configLoader.Load(projectPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading config: %w", err)
+	}
+
 	// 1. Scan filesystem
-	scan, err := s.scanner.Scan(projectPath)
+	scan, err := s.scanner.Scan(projectPath, cfg.ExcludePaths...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("scanning project: %w", err)
 	}

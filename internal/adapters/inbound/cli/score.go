@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/gitinfo"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/history"
@@ -46,6 +47,7 @@ func newScoreCmd() *cobra.Command {
 				scanner.New(),
 				detector.New(),
 				parser.New(),
+				config.New(),
 			)
 
 			score, err := svc.ScoreProject(absPath)

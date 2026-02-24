@@ -7,11 +7,12 @@ import (
 
 // Score represents the overall AI-readiness score of a project.
 type Score struct {
-	Overall      int             `json:"overall"`
-	Categories   []CategoryScore `json:"categories"`
-	Timestamp    time.Time       `json:"timestamp"`
-	CommitHash   string          `json:"commit_hash,omitempty"`
-	ModuleScores []ModuleScore   `json:"module_scores,omitempty"`
+	Overall       int             `json:"overall"`
+	Categories    []CategoryScore `json:"categories"`
+	Timestamp     time.Time       `json:"timestamp"`
+	CommitHash    string          `json:"commit_hash,omitempty"`
+	ModuleScores  []ModuleScore   `json:"module_scores,omitempty"`
+	AppliedConfig *ProjectConfig  `json:"applied_config,omitempty"`
 }
 
 func (s Score) Grade() string { return GradeFor(s.Overall) }
@@ -60,10 +61,11 @@ type CategoryScore struct {
 }
 
 type SubMetric struct {
-	Name   string `json:"name"`
-	Score  int    `json:"score"`
-	Points int    `json:"points"`
-	Detail string `json:"detail,omitempty"`
+	Name    string `json:"name"`
+	Score   int    `json:"score"`
+	Points  int    `json:"points"`
+	Detail  string `json:"detail,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"`
 }
 
 type ModuleScore struct {

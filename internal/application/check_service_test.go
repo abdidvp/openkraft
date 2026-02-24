@@ -3,6 +3,7 @@ package application_test
 import (
 	"testing"
 
+	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
@@ -16,6 +17,7 @@ func newCheckService() *application.CheckService {
 		scanner.New(),
 		detector.New(),
 		parser.New(),
+		config.New(),
 	)
 }
 
