@@ -2,7 +2,7 @@ package domain
 
 // ProjectScanner scans a project directory and returns file metadata.
 type ProjectScanner interface {
-	Scan(projectPath string) (*ScanResult, error)
+	Scan(projectPath string, excludePaths ...string) (*ScanResult, error)
 }
 
 // ScanResult holds the result of scanning a project directory.
@@ -64,6 +64,11 @@ type GitInfo interface {
 type ScoreHistory interface {
 	Save(projectPath string, entry ScoreEntry) error
 	Load(projectPath string) ([]ScoreEntry, error)
+}
+
+// ConfigLoader loads project configuration from the project directory.
+type ConfigLoader interface {
+	Load(projectPath string) (ProjectConfig, error)
 }
 
 // ScoreEntry represents a single historical score record.
