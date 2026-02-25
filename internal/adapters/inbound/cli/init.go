@@ -79,6 +79,7 @@ func generateConfig(pt domain.ProjectType) string {
 	}
 
 	cfg := domain.DefaultConfigForType(pt)
+	profile := domain.DefaultProfileForType(pt)
 
 	var skipSection string
 	if len(cfg.Skip.SubMetrics) > 0 {
@@ -96,6 +97,20 @@ func generateConfig(pt domain.ProjectType) string {
 		}
 	}
 
+	profileSection := fmt.Sprintf(`# profile:
+#   max_function_lines: %d
+#   max_file_lines: %d
+#   max_nesting_depth: %d
+#   max_parameters: %d
+#   max_conditional_ops: %d
+#   min_test_ratio: %.1f
+#   max_global_var_penalty: %d
+#   naming_convention: %s
+`, profile.MaxFunctionLines, profile.MaxFileLines,
+		profile.MaxNestingDepth, profile.MaxParameters,
+		profile.MaxConditionalOps, profile.MinTestRatio,
+		profile.MaxGlobalVarPenalty, profile.NamingConvention)
+
 	result := fmt.Sprintf("# OpenKraft configuration\n# See: https://github.com/openkraft/openkraft\n\nproject_type: %s\n\n%s\n", pt, weightsSection)
 
 	if skipSection != "" {
@@ -109,7 +124,8 @@ func generateConfig(pt domain.ProjectType) string {
 # min_thresholds:
 #   verifiability: 60
 #   code_health: 50
-`
+
+` + profileSection
 
 	return result
 }

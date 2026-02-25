@@ -73,5 +73,8 @@ func mergeConfig(base, override domain.ProjectConfig) domain.ProjectConfig {
 		result.MinThresholds = override.MinThresholds
 	}
 
+	// Profile overrides are always preserved from user config.
+	result.Profile = override.Profile
+
 	return result
 }

@@ -71,3 +71,36 @@ func TestInitCmd_InvalidType(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown project type")
 }
+
+func TestInitCmd_ConfigContainsProfileSection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	root := cli.NewRootCmdForTest()
+	root.SetArgs([]string{"init", tmpDir})
+	require.NoError(t, root.Execute())
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".openkraft.yaml"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "# profile:")
+	assert.Contains(t, content, "#   max_function_lines: 50")
+	assert.Contains(t, content, "#   min_test_ratio: 0.5")
+	assert.Contains(t, content, "#   naming_convention: auto")
+}
+
+func TestInitCmd_LibraryProfileValues(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	root := cli.NewRootCmdForTest()
+	root.SetArgs([]string{"init", tmpDir, "--type", "library"})
+	require.NoError(t, root.Execute())
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".openkraft.yaml"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "project_type: library")
+	// Library has stricter defaults
+	assert.Contains(t, content, "#   max_function_lines: 40")
+	assert.Contains(t, content, "#   min_test_ratio: 0.8")
+	assert.Contains(t, content, "#   max_parameters: 3")
+}

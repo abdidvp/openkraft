@@ -235,6 +235,49 @@ func TestE2E_ScoreSkippedCategory(t *testing.T) {
 	}
 }
 
+func TestE2E_InitContainsProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	out, code := run(t, "init", tmpDir, "--type", "api")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "Created")
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".openkraft.yaml"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "# profile:")
+	assert.Contains(t, content, "max_function_lines")
+}
+
+func TestE2E_ScoreWithProfileOverride(t *testing.T) {
+	fp := fixturePath("perfect")
+	cfgPath := filepath.Join(fp, ".openkraft.yaml")
+
+	// Write config with strict profile override
+	cfgContent := `project_type: api
+profile:
+  max_function_lines: 10
+  min_test_ratio: 1.0
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgContent), 0644))
+	defer os.Remove(cfgPath)
+	defer os.RemoveAll(filepath.Join(fp, ".openkraft"))
+
+	out, code := run(t, "score", fp, "--json")
+	assert.Equal(t, 0, code)
+
+	var score domain.Score
+	require.NoError(t, json.Unmarshal([]byte(out), &score))
+
+	// With max_function_lines=10, code_health should drop from 100
+	for _, cat := range score.Categories {
+		if cat.Name == "code_health" {
+			assert.Less(t, cat.Score, 100,
+				"strict max_function_lines=10 should lower code_health from perfect")
+		}
+	}
+	assert.NotNil(t, score.AppliedConfig)
+}
+
 // --- Version Test ---
 
 func TestE2E_Version(t *testing.T) {
