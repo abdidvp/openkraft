@@ -9,7 +9,7 @@ import (
 )
 
 func TestScoreContextQuality_NilInputs(t *testing.T) {
-	result := scoring.ScoreContextQuality(nil, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), nil, nil)
 
 	assert.Equal(t, "context_quality", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -22,7 +22,7 @@ func TestScoreContextQuality_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScoreContextQuality(scan, analyzed)
+	result := scoring.ScoreContextQuality(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "context_quality", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -45,20 +45,19 @@ func TestScoreContextQuality_WithDocumentedPackages(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreContextQuality(scan, analyzed)
+	result := scoring.ScoreContextQuality(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "context_quality", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
 	assert.Len(t, result.SubMetrics, 4)
 
-	// package_documentation should score well since all packages are documented.
 	pkgDoc := result.SubMetrics[1]
 	assert.Equal(t, "package_documentation", pkgDoc.Name)
 	assert.Equal(t, pkgDoc.Points, pkgDoc.Score)
 }
 
 func TestScoreContextQuality_SubMetricPointsSum(t *testing.T) {
-	result := scoring.ScoreContextQuality(nil, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), nil, nil)
 
 	totalPoints := 0
 	for _, sm := range result.SubMetrics {
@@ -68,7 +67,7 @@ func TestScoreContextQuality_SubMetricPointsSum(t *testing.T) {
 }
 
 func TestScoreContextQuality_SubMetricNames(t *testing.T) {
-	result := scoring.ScoreContextQuality(nil, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), nil, nil)
 
 	expectedNames := []string{
 		"ai_context_files", "package_documentation",
@@ -86,9 +85,8 @@ func TestScoreContextQuality_MissingContextFilesGeneratesIssues(t *testing.T) {
 		HasAgentsMD:    false,
 	}
 
-	result := scoring.ScoreContextQuality(scan, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), scan, nil)
 
-	// Should generate issues for missing CLAUDE.md, .cursorrules, AGENTS.md.
 	assert.GreaterOrEqual(t, len(result.Issues), 3)
 
 	categories := make(map[string]bool)
@@ -110,16 +108,19 @@ func TestScoreContextQuality_AIContextFilesFlags(t *testing.T) {
 		CursorRulesSize:        500,
 	}
 
-	result := scoring.ScoreContextQuality(scan, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), scan, nil)
 
 	aiContext := result.SubMetrics[0]
 	assert.Equal(t, "ai_context_files", aiContext.Name)
-	// 10 (CLAUDE.md) + 8 (AGENTS.md) + 7 (.cursorrules) + 5 (copilot) = 30.
+	// Default profile: CLAUDE.md=10, AGENTS.md=8, .cursorrules=7, copilot=5 → total=30 pts
+	// CLAUDE.md: min_size=500, size=1000 → 5 (half) + 5 (size met) = 10
+	// AGENTS.md: no min_size → full 8
+	// .cursorrules: min_size=200, size=500 → 3 (half, 7/2=3) + 4 (size met) = 7
+	// copilot: no min_size → full 5
 	assert.Equal(t, 30, aiContext.Score)
 }
 
 func TestScoreContextQuality_AIContextFilesPartialCredit(t *testing.T) {
-	// Small files: existence points only, no size bonus.
 	scan := &domain.ScanResult{
 		HasClaudeMD:     true,
 		HasCursorRules:  true,
@@ -129,10 +130,33 @@ func TestScoreContextQuality_AIContextFilesPartialCredit(t *testing.T) {
 		CursorRulesSize: 50, // <200
 	}
 
-	result := scoring.ScoreContextQuality(scan, nil)
+	result := scoring.ScoreContextQuality(defaultProfile(), scan, nil)
 
 	aiContext := result.SubMetrics[0]
 	assert.Equal(t, "ai_context_files", aiContext.Name)
-	// 5 (CLAUDE.md exists) + 4+4 (AGENTS.md exists+non-empty) + 3 (.cursorrules exists) = 16.
+	// CLAUDE.md: min_size=500, size=100 → 5 (half only, size not met)
+	// AGENTS.md: no min_size → full 8
+	// .cursorrules: min_size=200, size=50 → 3 (half only, size not met)
+	// Total: 5 + 8 + 3 = 16
 	assert.Equal(t, 16, aiContext.Score)
+}
+
+func TestScoreContextQuality_CustomContextFiles(t *testing.T) {
+	p := domain.DefaultProfile()
+	p.ContextFiles = []domain.ContextFileSpec{
+		{Name: "CLAUDE.md", Points: 20, MinSize: 100},
+	}
+
+	scan := &domain.ScanResult{
+		HasClaudeMD:  true,
+		ClaudeMDSize: 500,
+	}
+
+	result := scoring.ScoreContextQuality(&p, scan, nil)
+
+	aiContext := result.SubMetrics[0]
+	assert.Equal(t, "ai_context_files", aiContext.Name)
+	assert.Equal(t, 20, aiContext.Points, "points should match profile spec")
+	// 20 pts, min_size=100, size=500 → 10 (half) + 10 (size met) = 20
+	assert.Equal(t, 20, aiContext.Score)
 }

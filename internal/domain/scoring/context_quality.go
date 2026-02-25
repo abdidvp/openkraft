@@ -9,13 +9,13 @@ import (
 
 // ScoreContextQuality evaluates the quality of AI context files.
 // Weight: 0.15 (15% of overall score).
-func ScoreContextQuality(scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScoreContextQuality(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "context_quality",
 		Weight: 0.15,
 	}
 
-	sm1 := scoreAIContextFiles(scan)
+	sm1 := scoreAIContextFiles(profile, scan)
 	sm2 := scorePackageDocumentation(analyzed)
 	sm3 := scoreArchitectureDocs(scan)
 	sm4 := scoreCanonicalExamples(scan)
@@ -32,10 +32,17 @@ func ScoreContextQuality(scan *domain.ScanResult, analyzed map[string]*domain.An
 	return cat
 }
 
-// scoreAIContextFiles (30 pts): CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md.
-// Enhanced from ai_context.go.
-func scoreAIContextFiles(scan *domain.ScanResult) domain.SubMetric {
-	sm := domain.SubMetric{Name: "ai_context_files", Points: 30}
+// scoreAIContextFiles: uses profile.ContextFiles to determine which files to check
+// and their point values. Total points are the sum of all configured file points.
+func scoreAIContextFiles(profile *domain.ScoringProfile, scan *domain.ScanResult) domain.SubMetric {
+	totalPossible := 0
+	for _, cf := range profile.ContextFiles {
+		totalPossible += cf.Points
+	}
+	if totalPossible == 0 {
+		totalPossible = 30
+	}
+	sm := domain.SubMetric{Name: "ai_context_files", Points: totalPossible}
 
 	if scan == nil {
 		sm.Detail = "no scan data"
@@ -45,37 +52,25 @@ func scoreAIContextFiles(scan *domain.ScanResult) domain.SubMetric {
 	points := 0
 	found := []string{}
 
-	// CLAUDE.md (10 pts: 5 exists + 5 size>500)
-	if scan.HasClaudeMD {
-		points += 5
-		found = append(found, "CLAUDE.md")
-		if scan.ClaudeMDSize > 500 {
-			points += 5
+	for _, cf := range profile.ContextFiles {
+		exists, size := contextFileStatus(cf.Name, scan)
+		if !exists {
+			continue
 		}
-	}
-
-	// AGENTS.md (8 pts: 4 exists + 4 non-empty)
-	if scan.HasAgentsMD {
-		points += 4
-		found = append(found, "AGENTS.md")
-		if scan.AgentsMDSize > 0 {
-			points += 4
+		found = append(found, cf.Name)
+		if cf.MinSize > 0 {
+			// Half points for existence, full for meeting size threshold.
+			halfPts := cf.Points / 2
+			if halfPts == 0 {
+				halfPts = 1
+			}
+			points += halfPts
+			if size >= cf.MinSize {
+				points += cf.Points - halfPts
+			}
+		} else {
+			points += cf.Points
 		}
-	}
-
-	// .cursorrules (7 pts: 3 exists + 4 size>200)
-	if scan.HasCursorRules {
-		points += 3
-		found = append(found, ".cursorrules")
-		if scan.CursorRulesSize > 200 {
-			points += 4
-		}
-	}
-
-	// copilot-instructions.md (5 pts)
-	if scan.HasCopilotInstructions {
-		points += 5
-		found = append(found, "copilot-instructions.md")
 	}
 
 	if points > sm.Points {
@@ -88,6 +83,28 @@ func scoreAIContextFiles(scan *domain.ScanResult) domain.SubMetric {
 		sm.Detail = "no AI context files found"
 	}
 	return sm
+}
+
+// contextFileStatus maps a context file name to its scan status.
+func contextFileStatus(name string, scan *domain.ScanResult) (exists bool, size int) {
+	switch {
+	case name == "CLAUDE.md":
+		return scan.HasClaudeMD, scan.ClaudeMDSize
+	case name == "AGENTS.md":
+		return scan.HasAgentsMD, scan.AgentsMDSize
+	case name == ".cursorrules":
+		return scan.HasCursorRules, scan.CursorRulesSize
+	case strings.Contains(name, "copilot-instructions"):
+		return scan.HasCopilotInstructions, 0
+	default:
+		// Unknown context file — check AllFiles for presence.
+		for _, f := range scan.AllFiles {
+			if f == name || strings.HasSuffix(f, "/"+name) {
+				return true, 0
+			}
+		}
+		return false, 0
+	}
 }
 
 // scorePackageDocumentation (25 pts): ratio of packages with // Package ... doc comment.

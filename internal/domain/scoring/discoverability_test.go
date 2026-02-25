@@ -9,7 +9,7 @@ import (
 )
 
 func TestScoreDiscoverability_NilInputs(t *testing.T) {
-	result := scoring.ScoreDiscoverability(nil, nil, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), nil, nil, nil)
 
 	assert.Equal(t, "discoverability", result.Name)
 	assert.Equal(t, 0.20, result.Weight)
@@ -23,7 +23,7 @@ func TestScoreDiscoverability_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScoreDiscoverability(modules, scan, analyzed)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "discoverability", result.Name)
 	assert.Equal(t, 0.20, result.Weight)
@@ -83,7 +83,7 @@ func TestScoreDiscoverability_WellStructuredProject(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreDiscoverability(modules, scan, analyzed)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "discoverability", result.Name)
 	assert.Equal(t, 0.20, result.Weight)
@@ -101,7 +101,7 @@ func TestScoreDiscoverability_WellStructuredProject(t *testing.T) {
 }
 
 func TestScoreDiscoverability_SubMetricPointsSum(t *testing.T) {
-	result := scoring.ScoreDiscoverability(nil, nil, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), nil, nil, nil)
 
 	totalPoints := 0
 	for _, sm := range result.SubMetrics {
@@ -111,8 +111,6 @@ func TestScoreDiscoverability_SubMetricPointsSum(t *testing.T) {
 }
 
 func TestScoreDiscoverability_SharedLayersDifferentFiles(t *testing.T) {
-	// Modules share the same layers but have different domain files.
-	// Should score high on predictable_structure.
 	modules := []domain.DetectedModule{
 		{
 			Name:   "user",
@@ -136,11 +134,10 @@ func TestScoreDiscoverability_SharedLayersDifferentFiles(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreDiscoverability(modules, &domain.ScanResult{}, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, &domain.ScanResult{}, nil)
 
 	predictable := result.SubMetrics[2]
 	assert.Equal(t, "predictable_structure", predictable.Name)
-	// Same layers, same suffixes, same file counts → high score.
 	assert.GreaterOrEqual(t, predictable.Score, 20, "modules with identical layers should score high")
 }
 
@@ -166,7 +163,7 @@ func TestScoreDiscoverability_PredictableStructureWithoutSuffixes(t *testing.T) 
 		},
 	}
 
-	result := scoring.ScoreDiscoverability(modules, &domain.ScanResult{}, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, &domain.ScanResult{}, nil)
 
 	predictable := result.SubMetrics[2]
 	assert.Equal(t, "predictable_structure", predictable.Name)
@@ -199,7 +196,7 @@ func TestScoreDiscoverability_TestFileImportsNotCounted(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreDiscoverability(modules, &domain.ScanResult{}, analyzed)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, &domain.ScanResult{}, analyzed)
 
 	depDirection := result.SubMetrics[3]
 	assert.Equal(t, "dependency_direction", depDirection.Name)
@@ -216,7 +213,7 @@ func TestScoreDiscoverability_BareNamingConsistency(t *testing.T) {
 	scan := &domain.ScanResult{
 		GoFiles: []string{"scanner.go", "detector.go", "parser.go", "renderer.go", "config.go", "model.go", "ports.go", "helpers.go"},
 	}
-	result := scoring.ScoreDiscoverability(nil, scan, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), nil, scan, nil)
 	naming := result.SubMetrics[1]
 	assert.Equal(t, "file_naming_conventions", naming.Name)
 	assert.GreaterOrEqual(t, naming.Score, 22, "all-bare naming = 100%% consistent")
@@ -226,7 +223,7 @@ func TestScoreDiscoverability_MixedNamingReducesScore(t *testing.T) {
 	scan := &domain.ScanResult{
 		GoFiles: []string{"scanner.go", "detector.go", "user_handler.go", "tax_service.go", "parser.go", "config.go"},
 	}
-	result := scoring.ScoreDiscoverability(nil, scan, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), nil, scan, nil)
 	naming := result.SubMetrics[1]
 	assert.Less(t, naming.Score, 22, "mixed naming lowers score")
 	assert.Greater(t, naming.Score, 10, "majority still consistent")
@@ -237,7 +234,7 @@ func TestScoreDiscoverability_IncomparableModulesGetFullCredit(t *testing.T) {
 		{Name: "scoring", Layers: []string{"domain"}, Files: []string{"internal/domain/scoring/code_health.go"}},
 		{Name: "scanner", Layers: []string{"adapters"}, Files: []string{"internal/adapters/outbound/scanner/scanner.go"}},
 	}
-	result := scoring.ScoreDiscoverability(modules, &domain.ScanResult{}, nil)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, &domain.ScanResult{}, nil)
 	predictable := result.SubMetrics[2]
 	assert.Equal(t, "predictable_structure", predictable.Name)
 	assert.Equal(t, 25, predictable.Score, "no comparable pairs = full credit")
@@ -260,10 +257,22 @@ func TestScoreDiscoverability_DependencyViolation(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreDiscoverability(modules, &domain.ScanResult{}, analyzed)
+	result := scoring.ScoreDiscoverability(defaultProfile(), modules, &domain.ScanResult{}, analyzed)
 
-	// dependency_direction sub-metric should have reduced score due to domain importing adapters.
 	depDirection := result.SubMetrics[3]
 	assert.Equal(t, "dependency_direction", depDirection.Name)
 	assert.Less(t, depDirection.Score, depDirection.Points)
+}
+
+func TestScoreDiscoverability_ForcedBareNaming(t *testing.T) {
+	p := domain.DefaultProfile()
+	p.NamingConvention = "bare"
+
+	scan := &domain.ScanResult{
+		GoFiles: []string{"user_handler.go", "tax_service.go", "order_repo.go", "scanner.go"},
+	}
+	result := scoring.ScoreDiscoverability(&p, nil, scan, nil)
+	naming := result.SubMetrics[1]
+	// With forced "bare", only scanner.go matches. 1/4 = 25% → ~6 pts.
+	assert.Less(t, naming.Score, 10, "forced bare should penalize suffixed files")
 }

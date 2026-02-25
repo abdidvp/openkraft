@@ -9,7 +9,7 @@ import (
 )
 
 func TestScoreStructure_NilInputs(t *testing.T) {
-	result := scoring.ScoreStructure(nil, nil, nil)
+	result := scoring.ScoreStructure(defaultProfile(), nil, nil, nil)
 
 	assert.Equal(t, "structure", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -23,7 +23,7 @@ func TestScoreStructure_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScoreStructure(modules, scan, analyzed)
+	result := scoring.ScoreStructure(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "structure", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -80,7 +80,7 @@ func TestScoreStructure_WellStructuredProject(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreStructure(modules, scan, analyzed)
+	result := scoring.ScoreStructure(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "structure", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -98,7 +98,7 @@ func TestScoreStructure_WellStructuredProject(t *testing.T) {
 }
 
 func TestScoreStructure_SubMetricPointsSum(t *testing.T) {
-	result := scoring.ScoreStructure(nil, nil, nil)
+	result := scoring.ScoreStructure(defaultProfile(), nil, nil, nil)
 
 	totalPoints := 0
 	for _, sm := range result.SubMetrics {
@@ -108,7 +108,7 @@ func TestScoreStructure_SubMetricPointsSum(t *testing.T) {
 }
 
 func TestScoreStructure_NoModulesGeneratesIssue(t *testing.T) {
-	result := scoring.ScoreStructure(nil, &domain.ScanResult{}, nil)
+	result := scoring.ScoreStructure(defaultProfile(), nil, &domain.ScanResult{}, nil)
 
 	assert.NotEmpty(t, result.Issues)
 	found := false
@@ -134,7 +134,7 @@ func TestScoreStructure_CrossCuttingLayoutFullLayers(t *testing.T) {
 			"internal/adapters/outbound/scanner/scanner.go",
 		},
 	}
-	result := scoring.ScoreStructure(modules, scan, nil)
+	result := scoring.ScoreStructure(defaultProfile(), modules, scan, nil)
 	layers := result.SubMetrics[0]
 	assert.Equal(t, "expected_layers", layers.Name)
 	assert.Equal(t, 25, layers.Score, "all 5 items found: internal/, cmd/, domain, application, adapters")
@@ -160,7 +160,7 @@ func TestScoreStructure_InterfaceSatisfaction(t *testing.T) {
 		// EventPub NOT implemented.
 	}
 	modules := []domain.DetectedModule{{Name: "app"}}
-	result := scoring.ScoreStructure(modules, &domain.ScanResult{}, analyzed)
+	result := scoring.ScoreStructure(defaultProfile(), modules, &domain.ScanResult{}, analyzed)
 	contracts := result.SubMetrics[2]
 	assert.Equal(t, "interface_contracts", contracts.Name)
 	assert.Equal(t, 12, contracts.Score, "1/2 satisfied = 50% = 12/25")
@@ -173,7 +173,7 @@ func TestScoreStructure_ModuleCompletenessComparesWithinLayer(t *testing.T) {
 		{Name: "scanner", Layers: []string{"adapters"}, Files: []string{"x.go"}},
 		{Name: "parser", Layers: []string{"adapters"}, Files: []string{"y.go", "z.go"}},
 	}
-	result := scoring.ScoreStructure(modules, &domain.ScanResult{Layout: "cross-cutting"}, nil)
+	result := scoring.ScoreStructure(defaultProfile(), modules, &domain.ScanResult{Layout: "cross-cutting"}, nil)
 	completeness := result.SubMetrics[3]
 	assert.Equal(t, "module_completeness", completeness.Name)
 	assert.GreaterOrEqual(t, completeness.Score, 15)
@@ -189,10 +189,27 @@ func TestScoreStructure_SingleModuleGetsFullCompleteness(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreStructure(modules, &domain.ScanResult{}, nil)
+	result := scoring.ScoreStructure(defaultProfile(), modules, &domain.ScanResult{}, nil)
 
 	// module_completeness should be full for single module.
 	completeness := result.SubMetrics[3]
 	assert.Equal(t, "module_completeness", completeness.Name)
 	assert.Equal(t, completeness.Points, completeness.Score)
+}
+
+func TestScoreStructure_CustomProfileLayers(t *testing.T) {
+	// Library profile with only "domain" as expected layer and "pkg" as expected dir.
+	p := domain.DefaultProfileForType(domain.ProjectTypeLibrary)
+
+	modules := []domain.DetectedModule{
+		{Name: "mylib", Layers: []string{"domain"}, Files: []string{"pkg/model.go"}},
+	}
+	scan := &domain.ScanResult{
+		AllFiles: []string{"pkg/model.go", "pkg/model_test.go"},
+	}
+	result := scoring.ScoreStructure(&p, modules, scan, nil)
+	layers := result.SubMetrics[0]
+	assert.Equal(t, "expected_layers", layers.Name)
+	// Expected: pkg/ found (1/1 dirs) + domain found (1/1 layers) = 2/2 = 25 pts.
+	assert.Equal(t, 25, layers.Score)
 }

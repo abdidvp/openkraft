@@ -9,13 +9,13 @@ import (
 
 // ScoreVerifiability evaluates how easily AI agents can verify their changes.
 // Weight: 0.15 (15% of overall score).
-func ScoreVerifiability(scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScoreVerifiability(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "verifiability",
 		Weight: 0.15,
 	}
 
-	sm1 := scoreTestPresence(scan)
+	sm1 := scoreTestPresence(profile, scan)
 	sm2 := scoreTestNaming(scan, analyzed)
 	sm3 := scoreBuildReproducibility(scan)
 	sm4 := scoreTypeSafetySignals(scan, analyzed)
@@ -33,8 +33,8 @@ func ScoreVerifiability(scan *domain.ScanResult, analyzed map[string]*domain.Ana
 }
 
 // scoreTestPresence (25 pts): ratio of .go files with _test.go.
-// Migrated from tests.go:scoreUnitTestPresence.
-func scoreTestPresence(scan *domain.ScanResult) domain.SubMetric {
+// Uses profile.MinTestRatio as the target for full credit.
+func scoreTestPresence(profile *domain.ScoringProfile, scan *domain.ScanResult) domain.SubMetric {
 	sm := domain.SubMetric{Name: "test_presence", Points: 25}
 
 	sourceCount := len(scan.GoFiles) - len(scan.TestFiles)
@@ -46,12 +46,16 @@ func scoreTestPresence(scan *domain.ScanResult) domain.SubMetric {
 	}
 
 	ratio := float64(testCount) / float64(sourceCount)
-	score := int(ratio / 0.5 * float64(sm.Points))
+	target := profile.MinTestRatio
+	if target <= 0 {
+		target = 0.5
+	}
+	score := int(ratio / target * float64(sm.Points))
 	if score > sm.Points {
 		score = sm.Points
 	}
 	sm.Score = score
-	sm.Detail = fmt.Sprintf("%d test files for %d source files (ratio %.2f)", testCount, sourceCount, ratio)
+	sm.Detail = fmt.Sprintf("%d test files for %d source files (ratio %.2f, target %.2f)", testCount, sourceCount, ratio, target)
 	return sm
 }
 

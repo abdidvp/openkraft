@@ -10,14 +10,14 @@ import (
 
 // ScoreDiscoverability evaluates how easily AI agents can find relevant code.
 // Weight: 0.20 (20% of overall score).
-func ScoreDiscoverability(modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "discoverability",
 		Weight: 0.20,
 	}
 
 	sm1 := scoreNamingUniqueness(analyzed)
-	sm2 := scoreFileNamingConventions(scan)
+	sm2 := scoreFileNamingConventions(profile, scan)
 	sm3 := scorePredictableStructure(modules)
 	sm4 := scoreDiscoverabilityDependencyDirection(modules, analyzed)
 
@@ -73,9 +73,9 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 }
 
 // scoreFileNamingConventions (25 pts): measures internal naming consistency.
-// Classifies non-test Go files as "bare" (no underscore) or "suffixed" (has underscore).
-// The dominant pattern determines consistency; mixed naming lowers the score.
-func scoreFileNamingConventions(scan *domain.ScanResult) domain.SubMetric {
+// Respects profile.NamingConvention: "bare" or "suffixed" enforces that pattern;
+// "auto" (default) detects the dominant pattern and scores consistency.
+func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.ScanResult) domain.SubMetric {
 	sm := domain.SubMetric{Name: "file_naming_conventions", Points: 25}
 
 	if scan == nil || len(scan.GoFiles) == 0 {
@@ -107,13 +107,28 @@ func scoreFileNamingConventions(scan *domain.ScanResult) domain.SubMetric {
 		return sm
 	}
 
-	// Dominant pattern wins. Consistency = dominant / total.
-	dominant := bare
-	patternName := "bare"
-	if suffixed > bare {
+	// Determine expected pattern from profile.
+	convention := profile.NamingConvention
+	var dominant int
+	var patternName string
+
+	switch convention {
+	case "bare":
+		dominant = bare
+		patternName = "bare"
+	case "suffixed":
 		dominant = suffixed
 		patternName = "suffixed"
+	default: // "auto" or empty — detect dominant pattern.
+		if suffixed > bare {
+			dominant = suffixed
+			patternName = "suffixed"
+		} else {
+			dominant = bare
+			patternName = "bare"
+		}
 	}
+
 	consistency := float64(dominant) / float64(total)
 
 	// Bonus for suffix reuse among suffixed files.

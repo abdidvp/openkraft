@@ -11,6 +11,7 @@ import (
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
+	"github.com/openkraft/openkraft/internal/domain"
 	"github.com/openkraft/openkraft/internal/domain/golden"
 	"github.com/openkraft/openkraft/internal/domain/scoring"
 )
@@ -139,7 +140,8 @@ func handleConventionsResource(projectPath string) server.ResourceHandlerFunc {
 		}
 
 		analyzed := analyzeFiles(scan, par)
-		conventions := scoring.ScoreDiscoverability(nil, scan, analyzed)
+		p := domain.DefaultProfile()
+		conventions := scoring.ScoreDiscoverability(&p, nil, scan, analyzed)
 
 		data, err := json.MarshalIndent(conventions, "", "  ")
 		if err != nil {

@@ -10,7 +10,7 @@ import (
 )
 
 func TestScoreCodeHealth_NilInputs(t *testing.T) {
-	result := scoring.ScoreCodeHealth(nil, nil)
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, nil)
 
 	assert.Equal(t, "code_health", result.Name)
 	assert.Equal(t, 0.25, result.Weight)
@@ -23,7 +23,7 @@ func TestScoreCodeHealth_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScoreCodeHealth(scan, analyzed)
+	result := scoring.ScoreCodeHealth(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "code_health", result.Name)
 	assert.Equal(t, 0.25, result.Weight)
@@ -63,7 +63,7 @@ func TestScoreCodeHealth_WellStructuredCode(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreCodeHealth(scan, analyzed)
+	result := scoring.ScoreCodeHealth(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "code_health", result.Name)
 	assert.Equal(t, 0.25, result.Weight)
@@ -93,7 +93,7 @@ func TestScoreCodeHealth_SubMetricPointsSum(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreCodeHealth(nil, analyzed)
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed)
 
 	for _, sm := range result.SubMetrics {
 		totalPoints += sm.Points
@@ -112,21 +112,42 @@ func TestScoreCodeHealth_LargeFunctionsReduceScore(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreCodeHealth(nil, analyzed)
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed)
 
 	// With a 200-line function, deep nesting, many params, and complex conditionals,
 	// scores for those sub-metrics should be zero or low.
 	require.Len(t, result.SubMetrics, 5)
 
-	// function_size should be 0 (>100 lines).
+	// function_size should be 0 (>max*2=100 lines).
 	assert.Equal(t, 0, result.SubMetrics[0].Score)
-	// nesting_depth should be 0 (>=5).
+	// nesting_depth should be 0 (>max+1=4).
 	assert.Equal(t, 0, result.SubMetrics[2].Score)
-	// parameter_count should be 0 (>=7).
+	// parameter_count should be 0 (>max+2=6).
 	assert.Equal(t, 0, result.SubMetrics[3].Score)
-	// complex_conditionals should be 0 (>=4).
+	// complex_conditionals should be 0 (>max+1=3).
 	assert.Equal(t, 0, result.SubMetrics[4].Score)
 
 	// Issues should be generated for oversized function, nesting, and params.
 	assert.NotEmpty(t, result.Issues)
+}
+
+func TestScoreCodeHealth_CustomProfile(t *testing.T) {
+	// Use a relaxed profile — 100 line functions should pass.
+	p := domain.DefaultProfile()
+	p.MaxFunctionLines = 100
+
+	analyzed := map[string]*domain.AnalyzedFile{
+		"service.go": {
+			Path:       "service.go",
+			TotalLines: 150,
+			Functions: []domain.Function{
+				{Name: "BigFunc", LineStart: 1, LineEnd: 90, MaxNesting: 2, MaxCondOps: 1},
+			},
+		},
+	}
+
+	result := scoring.ScoreCodeHealth(&p, nil, analyzed)
+
+	// 90 lines <= 100 (profile max) → full credit.
+	assert.Equal(t, 20, result.SubMetrics[0].Score, "90 lines within max 100 should get full points")
 }

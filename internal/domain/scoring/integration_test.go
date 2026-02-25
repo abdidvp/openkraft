@@ -49,24 +49,29 @@ func loadFixture(t *testing.T, name string) fixtureData {
 
 type scorerFunc func(fixtureData) domain.CategoryScore
 
+func defaultProfile() *domain.ScoringProfile {
+	p := domain.DefaultProfile()
+	return &p
+}
+
 var scorers = map[string]scorerFunc{
 	"code_health": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScoreCodeHealth(fd.scan, fd.analyzed)
+		return scoring.ScoreCodeHealth(defaultProfile(), fd.scan, fd.analyzed)
 	},
 	"discoverability": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScoreDiscoverability(fd.modules, fd.scan, fd.analyzed)
+		return scoring.ScoreDiscoverability(defaultProfile(), fd.modules, fd.scan, fd.analyzed)
 	},
 	"structure": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScoreStructure(fd.modules, fd.scan, fd.analyzed)
+		return scoring.ScoreStructure(defaultProfile(), fd.modules, fd.scan, fd.analyzed)
 	},
 	"verifiability": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScoreVerifiability(fd.scan, fd.analyzed)
+		return scoring.ScoreVerifiability(defaultProfile(), fd.scan, fd.analyzed)
 	},
 	"context_quality": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScoreContextQuality(fd.scan, fd.analyzed)
+		return scoring.ScoreContextQuality(defaultProfile(), fd.scan, fd.analyzed)
 	},
 	"predictability": func(fd fixtureData) domain.CategoryScore {
-		return scoring.ScorePredictability(fd.modules, fd.scan, fd.analyzed)
+		return scoring.ScorePredictability(defaultProfile(), fd.modules, fd.scan, fd.analyzed)
 	},
 }
 

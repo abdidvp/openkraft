@@ -9,14 +9,14 @@ import (
 
 // ScoreStructure evaluates module boundaries and structural consistency.
 // Weight: 0.15 (15% of overall score).
-func ScoreStructure(modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScoreStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "structure",
 		Weight: 0.15,
 	}
 
-	sm1 := scoreExpectedLayers(modules, scan)
-	sm2 := scoreExpectedFiles(modules)
+	sm1 := scoreExpectedLayers(profile, modules, scan)
+	sm2 := scoreExpectedFiles(profile, modules)
 	sm3 := scoreInterfaceContracts(modules, analyzed)
 	sm4 := scoreModuleCompleteness(modules, analyzed)
 
@@ -32,8 +32,8 @@ func ScoreStructure(modules []domain.DetectedModule, scan *domain.ScanResult, an
 	return cat
 }
 
-// scoreExpectedLayers (25 pts): presence of directories per project type.
-func scoreExpectedLayers(modules []domain.DetectedModule, scan *domain.ScanResult) domain.SubMetric {
+// scoreExpectedLayers (25 pts): presence of directories per project profile.
+func scoreExpectedLayers(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult) domain.SubMetric {
 	sm := domain.SubMetric{Name: "expected_layers", Points: 25}
 
 	if scan == nil {
@@ -41,52 +41,53 @@ func scoreExpectedLayers(modules []domain.DetectedModule, scan *domain.ScanResul
 		return sm
 	}
 
-	hasInternal, hasCmd := false, false
+	// Check expected top-level dirs from profile.
+	dirFound := make(map[string]bool)
 	for _, f := range scan.AllFiles {
-		if strings.HasPrefix(f, "internal/") {
-			hasInternal = true
-		}
-		if strings.HasPrefix(f, "cmd/") {
-			hasCmd = true
+		for _, dir := range profile.ExpectedDirs {
+			if strings.HasPrefix(f, dir+"/") {
+				dirFound[dir] = true
+			}
 		}
 	}
 
-	expectedLayers := []string{"domain", "application", "adapters"}
+	// Check expected layers.
 	layerFound := make(map[string]bool)
-
 	if scan.Layout == domain.LayoutCrossCutting {
-		// Layers ARE top-level dirs under internal/.
 		for _, f := range scan.AllFiles {
 			if !strings.HasPrefix(f, "internal/") {
 				continue
 			}
 			parts := strings.SplitN(strings.TrimPrefix(f, "internal/"), "/", 2)
 			if len(parts) > 0 {
-				layerFound[normalizeLayerName(parts[0])] = true
+				layerFound[normalizeLayerNameWithProfile(parts[0], profile)] = true
 			}
 		}
 	} else {
-		// Layers are nested inside each module.
 		for _, m := range modules {
 			for _, l := range m.Layers {
-				layerFound[normalizeLayerName(l)] = true
+				layerFound[normalizeLayerNameWithProfile(l, profile)] = true
 			}
 		}
 	}
 
 	found := 0
-	if hasInternal {
-		found++
+	for _, dir := range profile.ExpectedDirs {
+		if dirFound[dir] {
+			found++
+		}
 	}
-	if hasCmd {
-		found++
-	}
-	for _, l := range expectedLayers {
+	for _, l := range profile.ExpectedLayers {
 		if layerFound[l] {
 			found++
 		}
 	}
-	total := 2 + len(expectedLayers) // 5
+	total := len(profile.ExpectedDirs) + len(profile.ExpectedLayers)
+	if total == 0 {
+		sm.Score = sm.Points
+		sm.Detail = "no expected layers/dirs configured"
+		return sm
+	}
 
 	sm.Score = int(float64(found) / float64(total) * float64(sm.Points))
 	if sm.Score > sm.Points {
@@ -96,20 +97,16 @@ func scoreExpectedLayers(modules []domain.DetectedModule, scan *domain.ScanResul
 	return sm
 }
 
-// normalizeLayerName maps common directory name variants to canonical layer names.
-func normalizeLayerName(name string) string {
-	switch name {
-	case "adapter", "infra", "infrastructure":
-		return "adapters"
-	case "app", "core":
-		return "application"
-	default:
-		return name
+// normalizeLayerNameWithProfile maps directory name variants using profile aliases.
+func normalizeLayerNameWithProfile(name string, profile *domain.ScoringProfile) string {
+	if canonical, ok := profile.LayerAliases[name]; ok {
+		return canonical
 	}
+	return name
 }
 
-// scoreExpectedFiles (25 pts): per module, ratio of files matching conventional suffixes.
-func scoreExpectedFiles(modules []domain.DetectedModule) domain.SubMetric {
+// scoreExpectedFiles (25 pts): per module, ratio of files matching profile's expected suffixes.
+func scoreExpectedFiles(profile *domain.ScoringProfile, modules []domain.DetectedModule) domain.SubMetric {
 	sm := domain.SubMetric{Name: "expected_files", Points: 25}
 
 	if len(modules) == 0 {
@@ -117,10 +114,7 @@ func scoreExpectedFiles(modules []domain.DetectedModule) domain.SubMetric {
 		return sm
 	}
 
-	conventionalSuffixes := []string{
-		"_model", "_service", "_handler", "_repository", "_ports",
-		"_errors", "_routes", "_rule", "_test",
-	}
+	suffixes := append(profile.ExpectedFileSuffixes, "_test")
 
 	totalRatio := 0.0
 	for _, m := range modules {
@@ -130,7 +124,7 @@ func scoreExpectedFiles(modules []domain.DetectedModule) domain.SubMetric {
 		matched := 0
 		for _, f := range m.Files {
 			name := strings.TrimSuffix(f, ".go")
-			for _, suffix := range conventionalSuffixes {
+			for _, suffix := range suffixes {
 				if strings.HasSuffix(name, suffix) {
 					matched++
 					break

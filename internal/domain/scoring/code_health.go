@@ -8,17 +8,17 @@ import (
 
 // ScoreCodeHealth evaluates the 5 code smells that predict AI refactoring success.
 // Weight: 0.25 (25% of overall score).
-func ScoreCodeHealth(scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScoreCodeHealth(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "code_health",
 		Weight: 0.25,
 	}
 
-	sm1 := scoreFunctionSize(analyzed)
-	sm2 := scoreFileSize(analyzed)
-	sm3 := scoreNestingDepth(analyzed)
-	sm4 := scoreParameterCount(analyzed)
-	sm5 := scoreComplexConditionals(analyzed)
+	sm1 := scoreFunctionSize(profile, analyzed)
+	sm2 := scoreFileSize(profile, analyzed)
+	sm3 := scoreNestingDepth(profile, analyzed)
+	sm4 := scoreParameterCount(profile, analyzed)
+	sm5 := scoreComplexConditionals(profile, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4, sm5}
 
@@ -28,13 +28,15 @@ func ScoreCodeHealth(scan *domain.ScanResult, analyzed map[string]*domain.Analyz
 	}
 	cat.Score = total
 
-	cat.Issues = collectCodeHealthIssues(analyzed)
+	cat.Issues = collectCodeHealthIssues(profile, analyzed)
 	return cat
 }
 
-// scoreFunctionSize (20 pts): ≤50 lines=full, 51-100=partial, >100=zero per function.
-func scoreFunctionSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreFunctionSize (20 pts): uses profile.MaxFunctionLines as threshold.
+// ≤max=full, max+1 to max*2=partial, >max*2=zero per function.
+func scoreFunctionSize(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "function_size", Points: 20}
+	maxLines := profile.MaxFunctionLines
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
@@ -45,9 +47,9 @@ func scoreFunctionSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetri
 			}
 			total++
 			switch {
-			case lines <= 50:
+			case lines <= maxLines:
 				earned += 1.0
-			case lines <= 100:
+			case lines <= maxLines*2:
 				earned += 0.5
 			}
 		}
@@ -62,13 +64,16 @@ func scoreFunctionSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetri
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within size limits", ratio*100, total)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within size limits (max %d lines)", ratio*100, total, maxLines)
 	return sm
 }
 
-// scoreFileSize (20 pts): ≤300 lines=full, 301-500=partial, >500=zero.
-func scoreFileSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreFileSize (20 pts): uses profile.MaxFileLines as threshold.
+// ≤max=full, max+1 to max*5/3=partial, >max*5/3=zero.
+func scoreFileSize(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "file_size", Points: 20}
+	maxLines := profile.MaxFileLines
+	partialLimit := maxLines * 5 / 3
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
@@ -77,9 +82,9 @@ func scoreFileSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 		}
 		total++
 		switch {
-		case af.TotalLines <= 300:
+		case af.TotalLines <= maxLines:
 			earned += 1.0
-		case af.TotalLines <= 500:
+		case af.TotalLines <= partialLimit:
 			earned += 0.5
 		}
 	}
@@ -93,22 +98,24 @@ func scoreFileSize(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("%.0f%% of %d files within size limits", ratio*100, total)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d files within size limits (max %d lines)", ratio*100, total, maxLines)
 	return sm
 }
 
-// scoreNestingDepth (20 pts): ≤3=full, 4=partial, ≥5=zero per function.
-func scoreNestingDepth(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreNestingDepth (20 pts): uses profile.MaxNestingDepth as threshold.
+// ≤max=full, max+1=partial, >max+1=zero per function.
+func scoreNestingDepth(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "nesting_depth", Points: 20}
+	maxDepth := profile.MaxNestingDepth
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
 		for _, fn := range af.Functions {
 			total++
 			switch {
-			case fn.MaxNesting <= 3:
+			case fn.MaxNesting <= maxDepth:
 				earned += 1.0
-			case fn.MaxNesting == 4:
+			case fn.MaxNesting == maxDepth+1:
 				earned += 0.5
 			}
 		}
@@ -123,13 +130,15 @@ func scoreNestingDepth(analyzed map[string]*domain.AnalyzedFile) domain.SubMetri
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within nesting limits", ratio*100, total)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within nesting limits (max %d)", ratio*100, total, maxDepth)
 	return sm
 }
 
-// scoreParameterCount (20 pts): ≤4=full, 5-6=partial, ≥7=zero per function.
-func scoreParameterCount(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreParameterCount (20 pts): uses profile.MaxParameters as threshold.
+// ≤max=full, max+1 to max+2=partial, >max+2=zero per function.
+func scoreParameterCount(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "parameter_count", Points: 20}
+	maxParams := profile.MaxParameters
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
@@ -137,9 +146,9 @@ func scoreParameterCount(analyzed map[string]*domain.AnalyzedFile) domain.SubMet
 			total++
 			paramCount := len(fn.Params)
 			switch {
-			case paramCount <= 4:
+			case paramCount <= maxParams:
 				earned += 1.0
-			case paramCount <= 6:
+			case paramCount <= maxParams+2:
 				earned += 0.5
 			}
 		}
@@ -154,22 +163,24 @@ func scoreParameterCount(analyzed map[string]*domain.AnalyzedFile) domain.SubMet
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within parameter limits", ratio*100, total)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within parameter limits (max %d)", ratio*100, total, maxParams)
 	return sm
 }
 
-// scoreComplexConditionals (20 pts): ≤2 &&/||=full, 3=partial, ≥4=zero.
-func scoreComplexConditionals(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreComplexConditionals (20 pts): uses profile.MaxConditionalOps as threshold.
+// ≤max=full, max+1=partial, >max+1=zero.
+func scoreComplexConditionals(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "complex_conditionals", Points: 20}
+	maxOps := profile.MaxConditionalOps
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
 		for _, fn := range af.Functions {
 			total++
 			switch {
-			case fn.MaxCondOps <= 2:
+			case fn.MaxCondOps <= maxOps:
 				earned += 1.0
-			case fn.MaxCondOps == 3:
+			case fn.MaxCondOps == maxOps+1:
 				earned += 0.5
 			}
 		}
@@ -184,49 +195,54 @@ func scoreComplexConditionals(analyzed map[string]*domain.AnalyzedFile) domain.S
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within conditional complexity limits", ratio*100, total)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within conditional complexity limits (max %d ops)", ratio*100, total, maxOps)
 	return sm
 }
 
-func collectCodeHealthIssues(analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
+func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
 	var issues []domain.Issue
+	funcIssueThreshold := profile.MaxFunctionLines * 2
+	nestIssueThreshold := profile.MaxNestingDepth + 2
+	paramIssueThreshold := profile.MaxParameters + 3
+	fileIssueThreshold := profile.MaxFileLines * 5 / 3
+
 	for _, af := range analyzed {
 		for _, fn := range af.Functions {
 			lines := fn.LineEnd - fn.LineStart + 1
-			if lines > 100 {
+			if lines > funcIssueThreshold {
 				issues = append(issues, domain.Issue{
 					Severity: domain.SeverityWarning,
 					Category: "code_health",
 					File:     af.Path,
 					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s is %d lines (>100)", fn.Name, lines),
+					Message:  fmt.Sprintf("function %s is %d lines (>%d)", fn.Name, lines, funcIssueThreshold),
 				})
 			}
-			if fn.MaxNesting >= 5 {
+			if fn.MaxNesting >= nestIssueThreshold {
 				issues = append(issues, domain.Issue{
 					Severity: domain.SeverityWarning,
 					Category: "code_health",
 					File:     af.Path,
 					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s has nesting depth %d (≥5)", fn.Name, fn.MaxNesting),
+					Message:  fmt.Sprintf("function %s has nesting depth %d (≥%d)", fn.Name, fn.MaxNesting, nestIssueThreshold),
 				})
 			}
-			if len(fn.Params) >= 7 {
+			if len(fn.Params) >= paramIssueThreshold {
 				issues = append(issues, domain.Issue{
 					Severity: domain.SeverityWarning,
 					Category: "code_health",
 					File:     af.Path,
 					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s has %d parameters (≥7)", fn.Name, len(fn.Params)),
+					Message:  fmt.Sprintf("function %s has %d parameters (≥%d)", fn.Name, len(fn.Params), paramIssueThreshold),
 				})
 			}
 		}
-		if af.TotalLines > 500 {
+		if af.TotalLines > fileIssueThreshold {
 			issues = append(issues, domain.Issue{
 				Severity: domain.SeverityWarning,
 				Category: "code_health",
 				File:     af.Path,
-				Message:  fmt.Sprintf("file has %d lines (>500)", af.TotalLines),
+				Message:  fmt.Sprintf("file has %d lines (>%d)", af.TotalLines, fileIssueThreshold),
 			})
 		}
 	}

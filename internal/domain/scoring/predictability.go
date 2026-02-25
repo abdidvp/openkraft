@@ -11,14 +11,14 @@ import (
 
 // ScorePredictability evaluates code standardization for AI value.
 // Weight: 0.10 (10% of overall score).
-func ScorePredictability(modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+func ScorePredictability(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
 	cat := domain.CategoryScore{
 		Name:   "predictability",
 		Weight: 0.10,
 	}
 
 	sm1 := scoreSelfDescribingNames(analyzed)
-	sm2 := scoreExplicitDependencies(analyzed)
+	sm2 := scoreExplicitDependencies(profile, analyzed)
 	sm3 := scoreErrorMessageQuality(analyzed)
 	sm4 := scoreConsistentPatterns(modules, analyzed)
 
@@ -67,8 +67,9 @@ func scoreSelfDescribingNames(analyzed map[string]*domain.AnalyzedFile) domain.S
 	return sm
 }
 
-// scoreExplicitDependencies (25 pts): count mutable package-level vars + init() functions. Zero=full.
-func scoreExplicitDependencies(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreExplicitDependencies (25 pts): count mutable package-level vars + init() functions.
+// Uses profile.MaxGlobalVarPenalty as per-violation penalty.
+func scoreExplicitDependencies(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "explicit_dependencies", Points: 25}
 
 	totalFiles := 0
@@ -98,8 +99,7 @@ func scoreExplicitDependencies(analyzed map[string]*domain.AnalyzedFile) domain.
 		sm.Score = sm.Points
 		sm.Detail = "no mutable package-level state or init() functions"
 	} else {
-		// Deduct: each global var or init costs 3 points.
-		penalty := mutableState * 3
+		penalty := mutableState * profile.MaxGlobalVarPenalty
 		sm.Score = sm.Points - penalty
 		if sm.Score < 0 {
 			sm.Score = 0

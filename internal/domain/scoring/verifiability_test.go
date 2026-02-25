@@ -9,8 +9,7 @@ import (
 )
 
 func TestScoreVerifiability_NilInputs(t *testing.T) {
-	// ScanResult is dereferenced directly, so pass an empty one to avoid panic.
-	result := scoring.ScoreVerifiability(&domain.ScanResult{}, nil)
+	result := scoring.ScoreVerifiability(defaultProfile(), &domain.ScanResult{}, nil)
 
 	assert.Equal(t, "verifiability", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -23,7 +22,7 @@ func TestScoreVerifiability_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScoreVerifiability(scan, analyzed)
+	result := scoring.ScoreVerifiability(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "verifiability", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -78,7 +77,7 @@ func TestScoreVerifiability_WellTestedProject(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScoreVerifiability(scan, analyzed)
+	result := scoring.ScoreVerifiability(defaultProfile(), scan, analyzed)
 
 	assert.Equal(t, "verifiability", result.Name)
 	assert.Equal(t, 0.15, result.Weight)
@@ -96,7 +95,7 @@ func TestScoreVerifiability_WellTestedProject(t *testing.T) {
 }
 
 func TestScoreVerifiability_SubMetricPointsSum(t *testing.T) {
-	result := scoring.ScoreVerifiability(&domain.ScanResult{}, nil)
+	result := scoring.ScoreVerifiability(defaultProfile(), &domain.ScanResult{}, nil)
 
 	totalPoints := 0
 	for _, sm := range result.SubMetrics {
@@ -110,9 +109,8 @@ func TestScoreVerifiability_NoTestsGeneratesIssue(t *testing.T) {
 		GoFiles: []string{"main.go"},
 	}
 
-	result := scoring.ScoreVerifiability(scan, nil)
+	result := scoring.ScoreVerifiability(defaultProfile(), scan, nil)
 
-	// test_presence should be zero, triggering an issue.
 	assert.Equal(t, 0, result.SubMetrics[0].Score)
 	assert.NotEmpty(t, result.Issues)
 }
@@ -128,9 +126,26 @@ func TestScoreVerifiability_BuildReproducibilitySignals(t *testing.T) {
 		HasCIConfig: true,
 	}
 
-	result := scoring.ScoreVerifiability(scan, nil)
+	result := scoring.ScoreVerifiability(defaultProfile(), scan, nil)
 
 	buildRepro := result.SubMetrics[2]
 	assert.Equal(t, "build_reproducibility", buildRepro.Name)
 	assert.Equal(t, 25, buildRepro.Score) // 10 + 8 + 7 = 25
+}
+
+func TestScoreVerifiability_CustomTestRatio(t *testing.T) {
+	p := domain.DefaultProfile()
+	p.MinTestRatio = 1.0 // Strict: need 1:1 test:source ratio for full credit.
+
+	scan := &domain.ScanResult{
+		GoFiles:   []string{"a.go", "b.go", "a_test.go"},
+		TestFiles: []string{"a_test.go"},
+	}
+
+	result := scoring.ScoreVerifiability(&p, scan, nil)
+
+	testPresence := result.SubMetrics[0]
+	assert.Equal(t, "test_presence", testPresence.Name)
+	// 1 test / 2 source = 0.5 ratio. Target 1.0 → 0.5/1.0 * 25 = 12.
+	assert.Equal(t, 12, testPresence.Score)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestScorePredictability_NilInputs(t *testing.T) {
-	result := scoring.ScorePredictability(nil, nil, nil)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, nil)
 
 	assert.Equal(t, "predictability", result.Name)
 	assert.Equal(t, 0.10, result.Weight)
@@ -24,7 +24,7 @@ func TestScorePredictability_EmptyInputs(t *testing.T) {
 	scan := &domain.ScanResult{}
 	analyzed := map[string]*domain.AnalyzedFile{}
 
-	result := scoring.ScorePredictability(modules, scan, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "predictability", result.Name)
 	assert.Equal(t, 0.10, result.Weight)
@@ -71,7 +71,7 @@ func TestScorePredictability_CleanCode(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScorePredictability(modules, scan, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), modules, scan, analyzed)
 
 	assert.Equal(t, "predictability", result.Name)
 	assert.Equal(t, 0.10, result.Weight)
@@ -89,7 +89,7 @@ func TestScorePredictability_CleanCode(t *testing.T) {
 }
 
 func TestScorePredictability_SubMetricPointsSum(t *testing.T) {
-	result := scoring.ScorePredictability(nil, nil, nil)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, nil)
 
 	totalPoints := 0
 	for _, sm := range result.SubMetrics {
@@ -104,18 +104,17 @@ func TestScorePredictability_NoErrorCallsGivesZero(t *testing.T) {
 			Path:       "service.go",
 			Package:    "app",
 			Functions:  []domain.Function{{Name: "DoWork", Exported: true}},
-			ErrorCalls: nil, // no error calls
+			ErrorCalls: nil,
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
 	errQuality := result.SubMetrics[2]
 	assert.Equal(t, "error_message_quality", errQuality.Name)
 	assert.Equal(t, 0, errQuality.Score, "no error calls should give zero points")
 	assert.Contains(t, errQuality.Detail, "no error handling found")
 
-	// Should also generate an info-level issue.
 	found := false
 	for _, issue := range result.Issues {
 		if issue.Category == "predictability" && strings.Contains(issue.Message, "no error handling") {
@@ -137,9 +136,9 @@ func TestScorePredictability_MutableStateReducesScore(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
-	// explicit_dependencies: 5 exported vars + 2 inits = 7 * 3 = 21 penalty.
+	// explicit_dependencies: 5 exported vars + 2 inits = 7 * 3 (default penalty) = 21 penalty.
 	// 25 - 21 = 4.
 	explDeps := result.SubMetrics[1]
 	assert.Equal(t, "explicit_dependencies", explDeps.Name)
@@ -158,7 +157,7 @@ func TestScorePredictability_UnexportedVarsNotPenalized(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
 	explDeps := result.SubMetrics[1]
 	assert.Equal(t, "explicit_dependencies", explDeps.Name)
@@ -172,14 +171,14 @@ func TestScorePredictability_SentinelErrorsNotPenalized(t *testing.T) {
 			Path:    "errors.go",
 			Package: "domain",
 			GlobalVars: []string{
-				"ErrNotFound",    // sentinel — skip
-				"ErrUnauthorized", // sentinel — skip
-				"DB",             // exported mutable — penalize
+				"ErrNotFound",
+				"ErrUnauthorized",
+				"DB",
 			},
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
 	explDeps := result.SubMetrics[1]
 	assert.Equal(t, "explicit_dependencies", explDeps.Name)
@@ -196,9 +195,8 @@ func TestScorePredictability_ExcessGlobalVarsGeneratesIssue(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
-	// Should generate issue for >3 global vars.
 	found := false
 	for _, issue := range result.Issues {
 		if issue.Category == "predictability" && issue.File == "globals.go" {
@@ -217,7 +215,7 @@ func TestScorePredictability_InitFunctionGeneratesIssue(t *testing.T) {
 		},
 	}
 
-	result := scoring.ScorePredictability(nil, nil, analyzed)
+	result := scoring.ScorePredictability(defaultProfile(), nil, nil, analyzed)
 
 	found := false
 	for _, issue := range result.Issues {
@@ -226,4 +224,25 @@ func TestScorePredictability_InitFunctionGeneratesIssue(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a predictability issue for init() function")
+}
+
+func TestScorePredictability_CustomGlobalVarPenalty(t *testing.T) {
+	p := domain.DefaultProfile()
+	p.MaxGlobalVarPenalty = 5 // Harsher penalty
+
+	analyzed := map[string]*domain.AnalyzedFile{
+		"config.go": {
+			Path:       "config.go",
+			Package:    "app",
+			GlobalVars: []string{"DB", "Logger"},
+			Functions:  []domain.Function{{Name: "Setup", Exported: true}},
+		},
+	}
+
+	result := scoring.ScorePredictability(&p, nil, nil, analyzed)
+
+	explDeps := result.SubMetrics[1]
+	assert.Equal(t, "explicit_dependencies", explDeps.Name)
+	// 2 exported vars * 5 penalty = 10. 25 - 10 = 15.
+	assert.Equal(t, 15, explDeps.Score)
 }
