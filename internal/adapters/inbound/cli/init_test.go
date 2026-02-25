@@ -33,8 +33,8 @@ func TestInitCmd_CLIToolType(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".openkraft.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "project_type: cli-tool")
-	assert.Contains(t, string(data), "handler_patterns")
-	assert.Contains(t, string(data), "repository_patterns")
+	assert.Contains(t, string(data), "interface_contracts")
+	assert.Contains(t, string(data), "module_completeness")
 }
 
 func TestInitCmd_FailsIfExists(t *testing.T) {

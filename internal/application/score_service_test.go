@@ -48,12 +48,12 @@ func TestScoreService_CategoriesHaveCorrectWeights(t *testing.T) {
 		weightMap[c.Name] = c.Weight
 	}
 
-	assert.Equal(t, 0.25, weightMap["architecture"])
-	assert.Equal(t, 0.20, weightMap["conventions"])
-	assert.Equal(t, 0.20, weightMap["patterns"])
-	assert.Equal(t, 0.15, weightMap["tests"])
-	assert.Equal(t, 0.10, weightMap["ai_context"])
-	assert.Equal(t, 0.10, weightMap["completeness"])
+	assert.Equal(t, 0.25, weightMap["code_health"])
+	assert.Equal(t, 0.20, weightMap["discoverability"])
+	assert.Equal(t, 0.15, weightMap["structure"])
+	assert.Equal(t, 0.15, weightMap["verifiability"])
+	assert.Equal(t, 0.15, weightMap["context_quality"])
+	assert.Equal(t, 0.10, weightMap["predictability"])
 }
 
 func TestScoreService_Deterministic(t *testing.T) {
@@ -87,16 +87,9 @@ func TestScoreService_InvalidPath(t *testing.T) {
 
 // --- Config-aware tests ---
 
-func TestScoreService_CLIConfigSkipsHandlerPatterns(t *testing.T) {
-	// Create a temp dir with a .openkraft.yaml for cli-tool type
-	tmpDir := t.TempDir()
+func TestScoreService_CLIConfigSkipsSubMetrics(t *testing.T) {
 	cfgContent := `project_type: cli-tool
 `
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".openkraft.yaml"), []byte(cfgContent), 0644))
-
-	// Copy the fixture's structure isn't needed — we test against the real fixture
-	// but the config comes from tmpDir. We need config loaded from the project path.
-	// So let's write the config into the fixture dir temporarily.
 	cfgPath := filepath.Join(fixtureDir, ".openkraft.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgContent), 0644))
 	defer os.Remove(cfgPath)
@@ -111,25 +104,24 @@ func TestScoreService_CLIConfigSkipsHandlerPatterns(t *testing.T) {
 	score, err := svc.ScoreProject(fixtureDir)
 	require.NoError(t, err)
 
-	// CLI config should skip handler_patterns and repository_patterns
+	// CLI config should skip interface_contracts and module_completeness
 	for _, cat := range score.Categories {
-		if cat.Name == "patterns" {
+		if cat.Name == "structure" {
 			for _, sm := range cat.SubMetrics {
-				if sm.Name == "handler_patterns" || sm.Name == "repository_patterns" {
+				if sm.Name == "interface_contracts" || sm.Name == "module_completeness" {
 					assert.True(t, sm.Skipped, "%s should be skipped for cli-tool", sm.Name)
 				}
 			}
 		}
 	}
 
-	// Applied config should be present
 	assert.NotNil(t, score.AppliedConfig)
 	assert.Equal(t, "cli-tool", string(score.AppliedConfig.ProjectType))
 }
 
 func TestScoreService_CustomWeightsApplied(t *testing.T) {
 	cfgContent := `weights:
-  tests: 0.50
+  verifiability: 0.50
 `
 	cfgPath := filepath.Join(fixtureDir, ".openkraft.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgContent), 0644))
@@ -146,8 +138,8 @@ func TestScoreService_CustomWeightsApplied(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, cat := range score.Categories {
-		if cat.Name == "tests" {
-			assert.InDelta(t, 0.50, cat.Weight, 0.001, "tests weight should be overridden")
+		if cat.Name == "verifiability" {
+			assert.InDelta(t, 0.50, cat.Weight, 0.001, "verifiability weight should be overridden")
 		}
 	}
 }
@@ -155,7 +147,7 @@ func TestScoreService_CustomWeightsApplied(t *testing.T) {
 func TestScoreService_SkippedCategoryExcluded(t *testing.T) {
 	cfgContent := `skip:
   categories:
-    - ai_context
+    - context_quality
 `
 	cfgPath := filepath.Join(fixtureDir, ".openkraft.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgContent), 0644))
@@ -171,9 +163,9 @@ func TestScoreService_SkippedCategoryExcluded(t *testing.T) {
 	score, err := svc.ScoreProject(fixtureDir)
 	require.NoError(t, err)
 
-	assert.Len(t, score.Categories, 5, "should have 5 categories when ai_context is skipped")
+	assert.Len(t, score.Categories, 5, "should have 5 categories when context_quality is skipped")
 	for _, cat := range score.Categories {
-		assert.NotEqual(t, "ai_context", cat.Name, "ai_context should be excluded")
+		assert.NotEqual(t, "context_quality", cat.Name, "context_quality should be excluded")
 	}
 }
 
@@ -188,6 +180,5 @@ func TestScoreService_DefaultConfig_NoAppliedConfig(t *testing.T) {
 	score, err := svc.ScoreProject(fixtureDir)
 	require.NoError(t, err)
 
-	// No .openkraft.yaml in fixture = default config = nil AppliedConfig
 	assert.Nil(t, score.AppliedConfig, "should not include AppliedConfig for default config")
 }

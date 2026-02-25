@@ -65,12 +65,12 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 
 	// 4. Run all 6 scorers
 	categories := []domain.CategoryScore{
-		scoring.ScoreArchitecture(modules, scan, analyzed),
-		scoring.ScoreConventions(scan, analyzed),
-		scoring.ScorePatterns(modules, analyzed),
-		scoring.ScoreTests(scan),
-		scoring.ScoreAIContext(scan),
-		scoring.ScoreCompleteness(modules, analyzed),
+		scoring.ScoreCodeHealth(scan, analyzed),
+		scoring.ScoreDiscoverability(modules, scan, analyzed),
+		scoring.ScoreStructure(modules, scan, analyzed),
+		scoring.ScoreVerifiability(scan, analyzed),
+		scoring.ScoreContextQuality(scan, analyzed),
+		scoring.ScorePredictability(modules, scan, analyzed),
 	}
 
 	// 5. Apply config: skip categories, filter sub-metrics, override weights

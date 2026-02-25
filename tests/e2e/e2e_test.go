@@ -56,7 +56,6 @@ func TestE2E_Score(t *testing.T) {
 	defer os.RemoveAll(filepath.Join(fixturePath("perfect"), ".openkraft"))
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "openkraft")
-	assert.Contains(t, out, "100")
 }
 
 func TestE2E_ScoreJSON(t *testing.T) {
@@ -70,6 +69,18 @@ func TestE2E_ScoreJSON(t *testing.T) {
 	assert.Len(t, score.Categories, 6, "should have 6 categories")
 	assert.True(t, score.Overall > 0, "overall should be positive")
 	assert.True(t, score.Overall <= 100, "overall should not exceed 100")
+
+	// Verify category names
+	catNames := make(map[string]bool)
+	for _, c := range score.Categories {
+		catNames[c.Name] = true
+	}
+	assert.True(t, catNames["code_health"])
+	assert.True(t, catNames["discoverability"])
+	assert.True(t, catNames["structure"])
+	assert.True(t, catNames["verifiability"])
+	assert.True(t, catNames["context_quality"])
+	assert.True(t, catNames["predictability"])
 }
 
 func TestE2E_ScoreCI(t *testing.T) {
@@ -95,6 +106,39 @@ func TestE2E_ScoreOrdering(t *testing.T) {
 
 	assert.Greater(t, perfect.Overall, incomplete.Overall, "perfect > incomplete")
 	assert.Greater(t, incomplete.Overall, empty.Overall, "incomplete > empty")
+
+	// Ensure meaningful gaps between tiers.
+	assert.GreaterOrEqual(t, perfect.Overall-incomplete.Overall, 5, "perfect - incomplete gap >= 5")
+	assert.GreaterOrEqual(t, incomplete.Overall-empty.Overall, 5, "incomplete - empty gap >= 5")
+}
+
+func TestE2E_ScorePerCategoryOrdering(t *testing.T) {
+	perfectOut, _ := run(t, "score", fixturePath("perfect"), "--json")
+	defer os.RemoveAll(filepath.Join(fixturePath("perfect"), ".openkraft"))
+
+	incompleteOut, _ := run(t, "score", fixturePath("incomplete"), "--json")
+	defer os.RemoveAll(filepath.Join(fixturePath("incomplete"), ".openkraft"))
+
+	var perfect, incomplete domain.Score
+	require.NoError(t, json.Unmarshal([]byte(perfectOut), &perfect))
+	require.NoError(t, json.Unmarshal([]byte(incompleteOut), &incomplete))
+
+	// Build category maps.
+	perfectCats := make(map[string]int)
+	for _, c := range perfect.Categories {
+		perfectCats[c.Name] = c.Score
+	}
+	incompleteCats := make(map[string]int)
+	for _, c := range incomplete.Categories {
+		incompleteCats[c.Name] = c.Score
+	}
+
+	// Perfect should beat or tie incomplete on every category.
+	for name, pScore := range perfectCats {
+		iScore := incompleteCats[name]
+		assert.GreaterOrEqual(t, pScore, iScore,
+			"category %s: perfect (%d) should be >= incomplete (%d)", name, pScore, iScore)
+	}
 }
 
 // --- Check Tests ---
@@ -161,12 +205,12 @@ func TestE2E_ScoreWithCLIConfig(t *testing.T) {
 	assert.NotNil(t, score.AppliedConfig)
 	assert.Equal(t, "cli-tool", string(score.AppliedConfig.ProjectType))
 
-	// Weights should reflect CLI defaults (conventions=0.25, patterns=0.10)
+	// Weights should reflect CLI defaults
 	for _, cat := range score.Categories {
-		if cat.Name == "conventions" {
-			assert.InDelta(t, 0.25, cat.Weight, 0.001)
+		if cat.Name == "discoverability" {
+			assert.InDelta(t, 0.20, cat.Weight, 0.001)
 		}
-		if cat.Name == "patterns" {
+		if cat.Name == "structure" {
 			assert.InDelta(t, 0.10, cat.Weight, 0.001)
 		}
 	}
@@ -175,7 +219,7 @@ func TestE2E_ScoreWithCLIConfig(t *testing.T) {
 func TestE2E_ScoreSkippedCategory(t *testing.T) {
 	fp := fixturePath("perfect")
 	cfgPath := filepath.Join(fp, ".openkraft.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("skip:\n  categories:\n    - ai_context\n"), 0644))
+	require.NoError(t, os.WriteFile(cfgPath, []byte("skip:\n  categories:\n    - context_quality\n"), 0644))
 	defer os.Remove(cfgPath)
 	defer os.RemoveAll(filepath.Join(fp, ".openkraft"))
 
@@ -185,9 +229,9 @@ func TestE2E_ScoreSkippedCategory(t *testing.T) {
 	var score domain.Score
 	require.NoError(t, json.Unmarshal([]byte(out), &score))
 
-	assert.Len(t, score.Categories, 5, "should have 5 categories when ai_context is skipped")
+	assert.Len(t, score.Categories, 5, "should have 5 categories when context_quality is skipped")
 	for _, cat := range score.Categories {
-		assert.NotEqual(t, "ai_context", cat.Name)
+		assert.NotEqual(t, "context_quality", cat.Name)
 	}
 }
 

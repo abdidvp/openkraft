@@ -217,7 +217,7 @@ func handleGetConventions(projectPath string) server.ToolHandlerFunc {
 		}
 
 		analyzed := analyzeFiles(scan, par)
-		conventions := scoring.ScoreConventions(scan, analyzed)
+		conventions := scoring.ScoreDiscoverability(nil, scan, analyzed)
 		return jsonResult(conventions)
 	}
 }

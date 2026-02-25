@@ -139,7 +139,7 @@ func handleConventionsResource(projectPath string) server.ResourceHandlerFunc {
 		}
 
 		analyzed := analyzeFiles(scan, par)
-		conventions := scoring.ScoreConventions(scan, analyzed)
+		conventions := scoring.ScoreDiscoverability(nil, scan, analyzed)
 
 		data, err := json.MarshalIndent(conventions, "", "  ")
 		if err != nil {

@@ -107,8 +107,8 @@ func generateConfig(pt domain.ProjectType) string {
 #   - third_party
 
 # min_thresholds:
-#   tests: 60
-#   architecture: 50
+#   verifiability: 60
+#   code_health: 50
 `
 
 	return result

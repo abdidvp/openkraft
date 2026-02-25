@@ -13,24 +13,24 @@ func sampleScore() *domain.Score {
 		Overall: 67,
 		Categories: []domain.CategoryScore{
 			{
-				Name: "architecture", Score: 80, Weight: 0.25,
+				Name: "code_health", Score: 80, Weight: 0.25,
 				SubMetrics: []domain.SubMetric{
-					{Name: "layer_separation", Score: 20, Points: 25, Detail: "clean layers"},
-					{Name: "dependency_direction", Score: 5, Points: 20, Detail: "3 violations"},
+					{Name: "function_size", Score: 20, Points: 20, Detail: "all functions small"},
+					{Name: "nesting_depth", Score: 5, Points: 20, Detail: "3 deep functions"},
 				},
 				Issues: []domain.Issue{
-					{Severity: "error", Category: "architecture", File: "internal/domain/foo_test.go", Message: "domain imports adapter"},
+					{Severity: "error", Category: "code_health", File: "internal/domain/foo.go", Message: "function too long"},
 				},
 			},
 			{
-				Name: "tests", Score: 45, Weight: 0.15,
+				Name: "verifiability", Score: 45, Weight: 0.15,
 				SubMetrics: []domain.SubMetric{
-					{Name: "unit_test_presence", Score: 25, Points: 25, Detail: "good coverage"},
-					{Name: "test_helpers", Score: 0, Points: 15, Detail: "none found"},
-					{Name: "handler_patterns", Score: 0, Points: 10, Skipped: true},
+					{Name: "test_presence", Score: 25, Points: 25, Detail: "good coverage"},
+					{Name: "test_naming", Score: 0, Points: 25, Detail: "none found"},
+					{Name: "interface_contracts", Score: 0, Points: 25, Skipped: true},
 				},
 				Issues: []domain.Issue{
-					{Severity: "warning", Category: "tests", Message: "missing test helpers"},
+					{Severity: "warning", Category: "verifiability", Message: "missing test naming conventions"},
 				},
 			},
 		},
@@ -45,8 +45,8 @@ func TestRenderScore_ContainsOverall(t *testing.T) {
 
 func TestRenderScore_ContainsCategoryNames(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "architecture")
-	assert.Contains(t, output, "tests")
+	assert.Contains(t, output, "code_health")
+	assert.Contains(t, output, "verifiability")
 }
 
 func TestRenderScore_ContainsGrade(t *testing.T) {
@@ -56,29 +56,29 @@ func TestRenderScore_ContainsGrade(t *testing.T) {
 
 func TestRenderScore_ContainsSubMetrics(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "layer_separation")
-	assert.Contains(t, output, "dependency_direction")
-	assert.Contains(t, output, "unit_test_presence")
-	assert.Contains(t, output, "test_helpers")
+	assert.Contains(t, output, "function_size")
+	assert.Contains(t, output, "nesting_depth")
+	assert.Contains(t, output, "test_presence")
+	assert.Contains(t, output, "test_naming")
 }
 
 func TestRenderScore_ShowsSubMetricDetails(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "clean layers")
-	assert.Contains(t, output, "3 violations")
+	assert.Contains(t, output, "all functions small")
+	assert.Contains(t, output, "3 deep functions")
 	assert.Contains(t, output, "none found")
 }
 
 func TestRenderScore_ShowsSkippedSubMetrics(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "handler_patterns")
+	assert.Contains(t, output, "interface_contracts")
 	assert.Contains(t, output, "skipped")
 }
 
 func TestRenderScore_ShowsIssues(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "domain imports adapter")
-	assert.Contains(t, output, "missing test helpers")
+	assert.Contains(t, output, "function too long")
+	assert.Contains(t, output, "missing test naming conventions")
 	assert.Contains(t, output, "Issues")
 }
 
@@ -90,13 +90,13 @@ func TestRenderScore_ShowsIssueSeverityTags(t *testing.T) {
 
 func TestRenderScore_ShowsIssueFile(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	assert.Contains(t, output, "internal/domain/foo_test.go")
+	assert.Contains(t, output, "internal/domain/foo.go")
 }
 
 func TestRenderScore_ErrorsBeforeWarnings(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
-	errorIdx := indexOf(output, "domain imports adapter")
-	warnIdx := indexOf(output, "missing test helpers")
+	errorIdx := indexOf(output, "function too long")
+	warnIdx := indexOf(output, "missing test naming conventions")
 	assert.True(t, errorIdx < warnIdx, "errors should appear before warnings")
 }
 
