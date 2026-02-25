@@ -1,10 +1,12 @@
-# Phase 6: Agent Companion -- Onboard, Fix, Validate
+# Phase 6: Agent Companion -- Consistency Coordinator for Multi-Agent Development
 
-**Goal:** Transform openkraft from a passive scoring tool into a real-time companion for AI coding agents. Agents consult openkraft in real-time to write correct code from the first attempt.
+**Goal:** Transform openkraft from a passive scoring tool into a **consistency coordinator** for AI coding agents. When multiple agents work on the same repo, openkraft ensures they all follow the same conventions, architecture, and patterns -- something no model can do alone, no matter how intelligent it becomes.
 
-**Architecture:** Three new capabilities layered on the existing scoring infrastructure: an `onboard` command for CLAUDE.md generation, a `fix` command for hybrid auto-repair, and a `validate` command for incremental file-level checking. Same hexagonal pattern. MCP-first design.
+**Identity shift:** Openkraft does not compete with AI models. Models write good code. Openkraft ensures that code written by 5 different agents over 3 months stays **internally consistent**. This is a coordination problem, not a capability problem -- and it gets harder as AI adoption grows, not easier.
 
-**Tech Stack:** Go 1.24, existing stack (Cobra, mark3labs/mcp-go, yaml.v3, lipgloss, testify). No new dependencies. No LLM dependency -- all analysis is deterministic AST + heuristics. Cache via JSON files in `.openkraft/cache/`.
+**Architecture:** Three new capabilities: `onboard` generates the project's consistency contract, `fix` corrects drift from established patterns, `validate` detects drift incrementally in <500ms. Same hexagonal pattern. MCP-first design.
+
+**Tech Stack:** Go 1.24, existing stack (Cobra, mark3labs/mcp-go, yaml.v3, lipgloss, testify). No new dependencies. No LLM dependency -- all analysis is deterministic AST + heuristics.
 
 **Prerequisite:** Phase 5 (config-aware scoring with profiles) complete and all tests passing.
 
@@ -12,32 +14,37 @@
 
 ---
 
-## Problem Analysis
+## Why Consistency, Not Quality
 
-Today openkraft answers one question: "How AI-ready is this codebase?" That produces a score. But a score alone does not help an AI agent write better code. The agent needs three things openkraft does not yet provide:
+AI models improve every 6 months. Each generation writes cleaner functions, better naming, more correct tests. Openkraft should not compete on things models will learn to do well.
 
-| What the agent needs | Current state | Phase 6 solution |
+What models **cannot** solve -- regardless of intelligence -- is **coordination across invocations**:
+
+| Problem | Why models can't solve it | What openkraft does |
 |---|---|---|
-| Project context before writing code | Agent reads files manually, misses conventions | `openkraft onboard` generates a CLAUDE.md from real analysis |
-| Fix guidance after scoring | Score report lists issues but agent must interpret them | `openkraft fix` applies safe fixes and returns structured instructions |
-| Fast feedback during coding | Full project re-scan on every change (slow, seconds) | `openkraft validate` does incremental checks in <500ms |
+| Agent A uses bare naming, Agent B uses suffixed | Each agent sees only its own context. Neither knows what the other did. | Detects naming drift: "3 files use suffixed but project convention is bare" |
+| 5 PRs each move a little logic from domain to application | Each PR looks reasonable in isolation. Cumulative effect is architecture erosion. | Detects architectural drift: "domain layer lost 3 functions to application in last 5 changes" |
+| New module doesn't follow the golden module's pattern | Agent doesn't know which module is canonical | Detects structural drift: "module `payments` has 2 layers but golden module has 4" |
+| Agent creates `utils.go` in a project that avoids utility files | Agent follows general Go best practices, not this project's conventions | Detects convention drift: "utils.go violates project pattern -- no utility files in codebase" |
 
-The agent workflow today is: guess context, write code, run full scan, read report, interpret issues, try again. The target workflow is: get context, write code, validate incrementally, get exact fix instructions, iterate until pass.
+The key insight: **the problem grows with AI adoption**. More agents = more drift risk. This makes openkraft more valuable over time, not less.
 
 ---
 
 ## Design
 
-### Capability 1: `openkraft onboard` -- Auto-generate CLAUDE.md
+### Capability 1: `openkraft onboard` -- Generate the Consistency Contract
 
-Analyzes the real codebase and generates a CLAUDE.md that reflects actual structure, patterns, and conventions. Not a generic template -- every line comes from codebase analysis.
+Analyzes the real codebase and generates a CLAUDE.md that serves as the **executable specification of project standards**. Not documentation -- a contract. Openkraft generates it, keeps it updated, and uses it as the reference for detecting drift.
+
+Every line comes from codebase analysis. No generic content. No filler.
 
 #### Reuses Existing Infrastructure
 
 | Existing component | Location | What onboard uses it for |
 |---|---|---|
-| `golden.SelectGolden` | `internal/domain/golden/selector.go` | Find best-structured module as canonical reference |
-| `golden.ExtractBlueprint` | `internal/domain/golden/blueprint.go` | Get structural blueprint (layers, file roles) |
+| `golden.SelectGolden` | `internal/domain/golden/selector.go` | Find the canonical module that defines "how we do things here" |
+| `golden.ExtractBlueprint` | `internal/domain/golden/blueprint.go` | Extract the structural blueprint other modules should follow |
 | `ModuleDetector.Detect` | `internal/domain/ports.go` | Detect all modules with their layers |
 | `ProjectScanner.Scan` | `internal/domain/ports.go` | Scan file tree, detect CI, context files, etc. |
 | `CodeAnalyzer.AnalyzeFile` | `internal/domain/ports.go` | AST analysis for functions, imports, interfaces |
@@ -45,17 +52,67 @@ Analyzes the real codebase and generates a CLAUDE.md that reflects actual struct
 
 `OnboardService` is a **composition layer** -- it calls these existing components and assembles the results into an `OnboardReport`.
 
-#### What It Detects
+#### What It Detects (and Codifies as Contract)
 
-| Detection | Method | Output in CLAUDE.md |
+| Detection | Method | Contract rule in CLAUDE.md |
 |---|---|---|
-| Architecture layout | Directory structure analysis | "Hexagonal with cross-cutting layers" |
-| Module structure | Existing `ModuleDetector.Detect` | Module list with paths and layers |
-| Naming conventions | Reuse bare/suffixed classification from discoverability scorer | "Files use bare naming (scanner.go, not scanner_service.go)" |
-| Golden module | Existing `golden.SelectGolden` | "Follow `internal/domain/scoring` as the canonical example" |
-| Build/test commands | Parse Makefile, go.mod | `go test ./...`, `make build` |
-| Dependency rules | Import graph analysis between layers | "domain/ has zero imports from adapters/" |
-| Key interfaces | AST analysis of interface declarations and satisfying types | Port-to-implementation mapping table |
+| Naming convention | Classify files as bare vs suffixed (existing scorer logic) | "ALWAYS use bare naming: `scanner.go`, never `scanner_service.go`" |
+| Architecture layout | Directory structure + module detection | "This is hexagonal. domain/ never imports from adapters/." |
+| Golden module | `golden.SelectGolden` | "Follow `internal/domain/scoring/` as the canonical example for new modules" |
+| Module blueprint | `golden.ExtractBlueprint` | "Every module must have: domain types, port interfaces, at least one adapter" |
+| File size norms | Statistical analysis of existing files | "Functions: max 50 lines. Files: max 300 lines." |
+| Test patterns | Scan test files for naming conventions | "Tests follow `Test<Func>_<Scenario>` naming" |
+| Build commands | Parse Makefile, go.mod | "`make test`, `make lint`, `go build ./...`" |
+| Dependency rules | Import graph between layers | "domain/ has zero imports from application/ or adapters/" |
+| Key interfaces | AST: interface declarations + satisfying types | "Port `ScoreHistory` -> implementation `JSONHistory` in `adapters/outbound/history/`" |
+
+#### Generated CLAUDE.md Format
+
+Target: under 200 lines. Every line is a rule, not a description. Empty sections omitted.
+
+```markdown
+# Project: {name}
+
+{one-line description from go.mod or package doc}
+
+## Architecture Contract
+
+{project_type} using {architecture_style} with {layout_style} layout.
+Golden module: `{path}` -- all new modules MUST follow this structure.
+
+## Naming Rules
+
+- File naming: {bare|suffixed} -- e.g., `scanner.go` not `scanner_service.go`
+- Functions: max {n} lines, max {n} parameters
+- Files: max {n} lines
+- Test naming: `Test<Func>_<Scenario>` pattern
+
+## Module Blueprint
+
+Every module must contain:
+{layers from golden module blueprint}
+
+| Module | Path | Layers | Follows blueprint |
+{detected modules with compliance status}
+
+## Dependency Rules
+
+- domain/ MUST NOT import from application/ or adapters/
+- application/ imports domain/ only
+- adapters/ import application/ and domain/
+{additional detected rules}
+
+## Key Interfaces
+
+| Port | Implementation | Package |
+{detected interface -> implementation mappings}
+
+## Build & Test
+
+{detected build and test commands}
+```
+
+The difference from a normal CLAUDE.md: every section is **prescriptive** ("MUST", "ALWAYS", "NEVER"), not descriptive ("uses", "has", "contains"). This is a contract that openkraft enforces via `validate`.
 
 #### CLI Interface
 
@@ -66,7 +123,6 @@ openkraft onboard [path]
 Flags:
 - `--force` -- overwrite existing CLAUDE.md (default: fail if file exists)
 - `--format md|json` -- output format (default: md)
-- `--output cursorrules|agents` -- generate .cursorrules or AGENTS.md instead of CLAUDE.md (deferred to later task if scope is too large)
 
 Exit codes: `0` success, `1` error.
 
@@ -78,83 +134,47 @@ If CLAUDE.md already exists and `--force` is not set, exit with error. No `--app
 openkraft_onboard(path: string, format?: "md" | "json") -> string
 ```
 
-Returns the generated content directly for the agent to consume. The agent reads this before writing any code.
-
-#### Generated CLAUDE.md Format
-
-Target: under 200 lines. Every line is actionable. Empty sections are omitted entirely.
-
-```markdown
-# Project: {name}
-
-{one-line description from go.mod or package doc}
-
-## Architecture
-
-{project_type} using {architecture_style} with {layout_style} layout.
-Golden module: `{path}` -- follow this as the canonical example.
-
-## Conventions
-
-- Naming: {bare|suffixed} -- e.g., `scanner.go` not `scanner_service.go`
-- Files: max {n} lines, functions: max {n} lines, params: max {n}
-- Tests: `{pattern}` alongside source files
-
-## Module Structure
-
-| Module | Path | Layers |
-{detected modules}
-
-## Dependency Rules
-
-- domain/ has zero imports from application/ or adapters/
-- application/ imports domain/ only
-
-## Key Interfaces
-
-| Port | Implementation | File |
-{detected interface -> implementation mappings}
-
-## Build & Test
-
-{detected build and test commands}
-```
+Returns the consistency contract directly. The agent reads this before writing any code.
 
 #### .cursorrules and AGENTS.md
 
-Deferred to a follow-up task within Phase 6. The core value is CLAUDE.md generation. Once the `OnboardReport` is solid, rendering to other formats is mechanical. The `--output` flag will gate this.
+Deferred to a follow-up task. The core value is CLAUDE.md as the consistency contract. Once the `OnboardReport` is solid, rendering to other formats is mechanical.
 
 ---
 
-### Capability 2: `openkraft fix` -- Hybrid Auto-Fix
+### Capability 2: `openkraft fix` -- Correct Drift from Established Patterns
 
-Takes scoring results and applies fixes. Safe fixes applied directly. Complex fixes returned as structured instructions for the agent to execute.
+Takes scoring results and corrects deviations from the project's established patterns. Safe fixes applied directly. Complex drift corrections returned as structured instructions.
+
+The key reframing: fix does not improve "quality" in the abstract. It **aligns code back to the project's own conventions**.
 
 #### Safe Auto-Fixes (Applied Directly)
 
-Only fixes that are guaranteed to not break compilation:
+Only fixes that are guaranteed to not break compilation and that establish missing infrastructure:
 
-| Fix | What it does |
-|---|---|
-| Generate CLAUDE.md | Calls `onboard` internally |
-| Create test stubs | Generates missing `_test.go` files with package declaration and one placeholder test |
-| Add .golangci.yml | Generates a basic linter config matching the project's detected thresholds |
+| Fix | What it does | Why it's safe |
+|---|---|---|
+| Generate CLAUDE.md | Calls `onboard` internally | Creates new file, never modifies existing |
+| Create test stubs | Generates missing `_test.go` with package declaration + placeholder | Creates new file only |
+| Add .golangci.yml | Generates linter config matching project's detected thresholds | Creates new file only |
 
 These are **file creation only** -- they never modify existing files.
 
-#### Instruction-Only Fixes (Returned as Structured Output)
+#### Drift Correction Instructions (Returned as Structured Output)
 
-Everything else is an instruction for the agent to execute, including things that seem simple but can produce bad output if auto-generated:
+Everything else is an instruction for the agent, framed as "align to project pattern":
 
-| Fix | What it returns |
+| Drift type | What it returns |
 |---|---|
-| Add package doc comments | Suggests which packages need `// Package xxx ...` (agent writes better docs than we can auto-generate) |
-| Generate .cursorrules | Instructions with detected conventions for the agent to write |
-| Create AGENTS.md | Instructions with project metadata for the agent to compose |
-| Split long functions | Suggests split points with function names |
-| Reduce parameter count | Suggests grouping parameters into structs |
-| Fix dependency violations | Suggests correct import paths |
-| Add missing module files | Provides file list based on golden module blueprint |
+| Naming inconsistency | "File `payment_service.go` uses suffixed naming but project convention is bare. Rename to `payment.go`." |
+| Missing package docs | "Package `payments` has no doc comment. See `internal/domain/` for the project's doc style." |
+| Module structure gap | "Module `auth` has 2 layers but golden module has 4. Add: port interfaces, adapter directory." |
+| Function too long (vs project norm) | "Function `processOrder` is 82 lines. Project norm is 50 (p90 of existing functions). Split into `processOrder` + `validateOrderItems`." |
+| Too many parameters (vs project norm) | "Function has 6 params. Project norm is 4. Group into `OrderRequest` struct." |
+| Dependency violation | "`domain/user.go` imports `adapters/db`. Project rule: domain/ has zero adapter imports. Move to application layer." |
+| Architecture erosion | "3 functions moved from domain to application in recent changes. This violates the project's layering pattern." |
+
+Note: thresholds are **relative to the project itself** (p90 of function lengths, not an arbitrary global limit). This is what makes it drift detection, not generic linting.
 
 #### Implementation
 
@@ -172,28 +192,33 @@ type FixOptions struct {
 }
 
 func (s *FixService) PlanFixes(projectPath string, opts FixOptions) (*domain.FixPlan, error) {
-    // 1. Score the project
+    // 1. Score the project (detects drift)
     score, err := s.scoreService.ScoreProject(projectPath)
     if err != nil {
         return nil, fmt.Errorf("scoring project: %w", err)
     }
 
-    plan := &domain.FixPlan{ScoreBefore: score.Overall}
-
-    // 2. Identify safe fixes from score issues
-    plan.Applied = s.identifySafeFixes(projectPath, score, opts)
-
-    // 3. Generate instructions for complex fixes
-    if !opts.AutoOnly {
-        plan.Instructions = s.generateInstructions(score, opts)
+    // 2. Generate onboard report (establishes what "consistent" means)
+    report, err := s.onboardService.GenerateOnboardReport(projectPath)
+    if err != nil {
+        return nil, fmt.Errorf("generating onboard report: %w", err)
     }
 
-    // 4. Apply safe fixes (unless dry run)
+    plan := &domain.FixPlan{ScoreBefore: score.Overall}
+
+    // 3. Identify safe fixes (missing infrastructure)
+    plan.Applied = s.identifySafeFixes(projectPath, score, opts)
+
+    // 4. Generate drift correction instructions (relative to project norms)
+    if !opts.AutoOnly {
+        plan.Instructions = s.generateDriftCorrections(score, report, opts)
+    }
+
+    // 5. Apply safe fixes (unless dry run)
     if !opts.DryRun {
         if err := s.applyFixes(projectPath, plan); err != nil {
             return nil, fmt.Errorf("applying fixes: %w", err)
         }
-        // Re-score to get the after score
         afterScore, _ := s.scoreService.ScoreProject(projectPath)
         if afterScore != nil {
             plan.ScoreAfter = afterScore.Overall
@@ -204,35 +229,45 @@ func (s *FixService) PlanFixes(projectPath string, opts FixOptions) (*domain.Fix
 }
 ```
 
-Note: `FixService` uses `os.WriteFile` and `os.MkdirAll` directly for applying safe fixes (file creation only). No `FileWriter` port needed -- writing files to disk is not an external dependency that requires abstraction.
+Note: `FixService` uses `os.WriteFile` and `os.MkdirAll` directly for safe fixes (file creation only). No `FileWriter` port -- writing files to disk is not an external dependency that needs abstraction.
 
 #### Output Format
 
 ```json
 {
   "applied": [
-    {"type": "create_file", "path": "CLAUDE.md", "description": "Generated from codebase analysis"},
-    {"type": "create_file", "path": "internal/payments/service_test.go", "description": "Test stub"}
+    {"type": "create_file", "path": "CLAUDE.md", "description": "Generated consistency contract from codebase analysis"}
   ],
   "instructions": [
     {
-      "type": "add_package_doc",
-      "file": "internal/payments/service.go",
-      "message": "Add package doc comment: // Package payments handles payment processing and validation.",
-      "priority": "medium"
+      "type": "naming_drift",
+      "file": "internal/payments/payment_service.go",
+      "message": "Rename to payment.go -- project convention is bare naming (detected from 23/25 existing files)",
+      "priority": "high",
+      "project_norm": "bare naming (92% of files)"
     },
     {
-      "type": "refactor",
-      "file": "internal/x/service.go",
+      "type": "structure_drift",
+      "file": "internal/auth/",
+      "message": "Module has 2 layers but golden module (internal/domain/scoring/) has 4. Missing: port interfaces, test files.",
+      "priority": "high",
+      "project_norm": "4 layers per module"
+    },
+    {
+      "type": "size_drift",
+      "file": "internal/orders/service.go",
       "line": 45,
-      "message": "Split processOrder (82 lines) into processOrder + validateOrderItems",
-      "priority": "high"
+      "message": "Function processOrder is 82 lines. Project p90 is 50 lines. Split into processOrder + validateOrderItems.",
+      "priority": "medium",
+      "project_norm": "p90 function length: 50 lines"
     }
   ],
   "score_before": 78,
   "score_after": 83
 }
 ```
+
+Each instruction includes `project_norm` -- the specific evidence from the project that defines what "consistent" means. This makes the instruction verifiable, not opinionated.
 
 #### CLI Interface
 
@@ -241,9 +276,9 @@ openkraft fix [path]
 ```
 
 Flags:
-- `--dry-run` -- show what would change without applying
-- `--auto-only` -- only apply safe auto-fixes, skip instruction generation
-- `--category <name>` -- fix only issues in a specific scoring category
+- `--dry-run` -- show drift corrections without applying
+- `--auto-only` -- only apply safe auto-fixes, skip drift instructions
+- `--category <name>` -- fix only drift in a specific scoring category
 
 Exit codes: `0` success, `1` error.
 
@@ -253,35 +288,35 @@ Exit codes: `0` success, `1` error.
 openkraft_fix(path: string, dry_run?: bool, category?: string) -> FixPlan
 ```
 
-Agent calls this after scoring to get a complete fix plan as JSON.
+Agent calls this after scoring to get drift corrections with project-specific evidence.
 
 ---
 
-### Capability 3: `openkraft validate <files>` -- Incremental Validation
+### Capability 3: `openkraft validate` -- Incremental Drift Detection
 
-Scores only the changed files, not the whole project. Uses a cached baseline scan for performance (<500ms target). Returns exact score delta per category.
+The primary tool agents call after every change. Answers one question: **"Does this change drift from the project's established patterns?"**
+
+Not "is this good code?" -- the model already knows that. But "is this code **consistent with what already exists here?**"
 
 #### How It Works
 
 1. On first call, run a full project scan and cache the result in `.openkraft/cache/`.
-2. On subsequent calls, accept a list of changed/added/deleted files.
+2. On subsequent calls, accept lists of changed/added/deleted files.
 3. For changed/added files: re-analyze with `CodeAnalyzer` and merge into cached data.
 4. For deleted files: remove from cached `AnalyzedFiles` and `ScanResult` file lists.
 5. For new files: add to cached `ScanResult` file lists (GoFiles, TestFiles, AllFiles).
-6. Re-run all 6 scorers with the merged data (scorers are fast, <50ms total -- selective re-run adds complexity without meaningful performance gain).
-7. Return the exact score delta compared to the cached baseline.
+6. Re-run all 6 scorers with the merged data (scorers are fast, <50ms total).
+7. Return the exact score delta + specific drift issues compared to baseline.
 
 #### Cache Invalidation Strategy
 
-**Content-based, not time-based.** A 5-minute TTL is wrong because the agent may change files within that window.
+**Content-based, not time-based.** The cache stores hashes of `go.mod` and `.openkraft.yaml`. On each call:
 
-The cache stores a fingerprint map: `filename -> mod_time` for all Go files, `go.mod`, and `.openkraft.yaml`. On each `validate` call:
-
-1. Check if `go.mod` or `.openkraft.yaml` mod_time changed -> full invalidation.
+1. Check if `go.mod` or `.openkraft.yaml` hash changed -> full invalidation.
 2. For the specified files, update the cache with fresh analysis.
-3. The cache is valid indefinitely as long as the caller correctly reports which files changed.
+3. Cache is valid indefinitely as long as caller reports which files changed.
 
-The `--no-cache` flag forces a full re-scan for cases where the caller is unsure.
+`--no-cache` flag forces full re-scan.
 
 ```go
 // internal/domain/cache.go
@@ -354,13 +389,13 @@ func (s *ValidateService) Validate(projectPath string, changed, added, deleted [
     modules := s.detector.Detect(cached.ScanResult)
     newScore := s.scoreService.ScoreWithData(cached.ScanResult, modules, cached.AnalyzedFiles)
 
-    // 6. Compute delta
+    // 6. Compute delta and identify drift
     result := computeDelta(cached.BaselineScore, newScore, strict)
     return result, nil
 }
 ```
 
-Note: `ScanResult` needs two new methods: `AddFile(path)` and `RemoveFile(path)` that maintain GoFiles, TestFiles, and AllFiles lists consistently.
+Note: `ScanResult` needs two new methods: `AddFile(path)` and `RemoveFile(path)`.
 
 #### Response Format
 
@@ -368,28 +403,31 @@ Note: `ScanResult` needs two new methods: `AddFile(path)` and `RemoveFile(path)`
 {
   "status": "pass",
   "files_checked": ["internal/payments/service.go"],
-  "issues": [
+  "drift_issues": [
     {
       "file": "internal/payments/service.go",
       "line": 23,
       "severity": "warning",
-      "message": "Function processPayment has 5 parameters (max: 4)",
-      "category": "code_health"
+      "message": "Function processPayment has 5 parameters (project norm: max 4)",
+      "category": "code_health",
+      "drift_type": "size_drift"
     }
   ],
   "score_impact": {
-    "overall": 2,
-    "categories": {"code_health": 3, "structure": -1}
+    "overall": -2,
+    "categories": {"code_health": -3, "structure": 0, "discoverability": 1}
   },
-  "suggestions": ["Consider adding a test file for service.go"]
+  "suggestions": [
+    "This file introduces suffixed naming (payment_service.go) in a project that uses bare naming (92% of files). Consider renaming."
+  ]
 }
 ```
 
 Fail conditions:
-- Any new issue with severity `"error"` -> status `"fail"`
+- Any new drift issue with severity `"error"` -> status `"fail"`
 - Overall score drops below configured `min_threshold` -> status `"fail"`
 - New warnings only -> status `"warn"`
-- No new issues -> status `"pass"`
+- No drift detected -> status `"pass"`
 
 #### CLI Interface
 
@@ -398,9 +436,9 @@ openkraft validate <file1> <file2> ...
 ```
 
 Flags:
-- `--strict` -- fail on any warning (not just errors)
+- `--strict` -- fail on any drift warning (not just errors)
 - `--no-cache` -- force full re-scan
-- `--deleted <file1>,<file2>` -- specify deleted files (CLI cannot auto-detect)
+- `--deleted <file1>,<file2>` -- specify deleted files
 
 Exit codes: `0` pass, `1` fail, `2` warn (unless `--strict`, then warn is also `1`).
 
@@ -410,7 +448,7 @@ Exit codes: `0` pass, `1` fail, `2` warn (unless `--strict`, then warn is also `
 openkraft_validate(path: string, changed: []string, added?: []string, deleted?: []string, strict?: bool) -> ValidationResult
 ```
 
-This is the primary tool agents call after each change. All file path parameters are arrays (MCP supports array parameters natively). Paths are relative to the project root.
+Primary tool agents call after each change. Array parameters (MCP supports natively). Paths relative to project root.
 
 ---
 
@@ -418,13 +456,15 @@ This is the primary tool agents call after each change. All file path parameters
 
 ```
 Agent receives task
-  -> calls openkraft_onboard (understands project)
-  -> writes code
-  -> calls openkraft_validate(changed: [...]) (checks work)
-  -> if issues: calls openkraft_fix (gets corrections)
-  -> repeat until status == "pass"
-  -> opens PR
+  -> calls openkraft_onboard (reads the consistency contract)
+  -> writes code following the contract
+  -> calls openkraft_validate(changed: [...]) (checks for drift)
+  -> if drift: calls openkraft_fix (gets project-specific corrections)
+  -> repeat until status == "pass" (no drift)
+  -> opens PR (guaranteed consistent with existing codebase)
 ```
+
+The difference from a quality workflow: the agent doesn't need to "write good code" (it already does). It needs to "write code that looks like it belongs in this project." That's what openkraft coordinates.
 
 ---
 
@@ -442,11 +482,16 @@ type OnboardReport struct {
     Modules           []ModuleInfo       `json:"modules"`
     NamingConvention  string             `json:"naming_convention"`
     GoldenModule      string             `json:"golden_module"`
+    ModuleBlueprint   []string           `json:"module_blueprint"`
     BuildCommands     []string           `json:"build_commands"`
     TestCommands      []string           `json:"test_commands"`
     DependencyRules   []DependencyRule   `json:"dependency_rules"`
     Interfaces        []InterfaceMapping `json:"interfaces"`
     Profile           *ScoringProfile    `json:"profile"`
+    // Project norms (statistical, not arbitrary)
+    NormFunctionLines int     `json:"norm_function_lines"` // p90 of existing functions
+    NormFileLines     int     `json:"norm_file_lines"`     // p90 of existing files
+    NormParameters    int     `json:"norm_parameters"`     // p90 of existing functions
 }
 
 // internal/domain/fix.go
@@ -464,28 +509,30 @@ type AppliedFix struct {
 }
 
 type Instruction struct {
-    Type     string `json:"type"`
-    File     string `json:"file"`
-    Line     int    `json:"line,omitempty"`
-    Message  string `json:"message"`
-    Priority string `json:"priority"`
+    Type        string `json:"type"`
+    File        string `json:"file"`
+    Line        int    `json:"line,omitempty"`
+    Message     string `json:"message"`
+    Priority    string `json:"priority"`
+    ProjectNorm string `json:"project_norm"` // evidence from the project itself
 }
 
 // internal/domain/validate.go
 type ValidationResult struct {
     Status       string            `json:"status"`
     FilesChecked []string          `json:"files_checked"`
-    Issues       []ValidationIssue `json:"issues"`
+    DriftIssues  []DriftIssue      `json:"drift_issues"`
     ScoreImpact  ScoreImpact       `json:"score_impact"`
     Suggestions  []string          `json:"suggestions"`
 }
 
-type ValidationIssue struct {
-    File     string `json:"file"`
-    Line     int    `json:"line,omitempty"`
-    Severity string `json:"severity"`
-    Message  string `json:"message"`
-    Category string `json:"category"`
+type DriftIssue struct {
+    File      string `json:"file"`
+    Line      int    `json:"line,omitempty"`
+    Severity  string `json:"severity"`
+    Message   string `json:"message"`
+    Category  string `json:"category"`
+    DriftType string `json:"drift_type"` // naming_drift, structure_drift, size_drift, dependency_drift
 }
 
 type ScoreImpact struct {
@@ -517,7 +564,7 @@ type CacheStore interface {
 }
 ```
 
-No `FileWriter` port. Safe fixes use `os.WriteFile` directly -- writing files to the local filesystem is not an external dependency that needs abstraction.
+No `FileWriter` port. Safe fixes use `os.WriteFile` directly.
 
 ### New Methods on Existing Types
 
@@ -532,11 +579,11 @@ func (s *ScanResult) RemoveFile(path string) // removes from GoFiles/TestFiles/A
 
 ```
 internal/application/
-  onboard_service.go       # Composes existing infrastructure into OnboardReport
+  onboard_service.go       # Composes existing infrastructure into OnboardReport + consistency contract
   onboard_service_test.go
-  fix_service.go           # Identifies safe fixes and generates instructions
+  fix_service.go           # Detects drift and generates project-relative corrections
   fix_service_test.go
-  validate_service.go      # Cache management and incremental score delta
+  validate_service.go      # Cache management and incremental drift detection
   validate_service_test.go
 ```
 
@@ -557,8 +604,6 @@ internal/adapters/
       tools.go             # New tools: openkraft_onboard, openkraft_fix, openkraft_validate
 ```
 
-Note: no `filewriter/` adapter. Removed as over-engineering.
-
 ---
 
 ## Task Breakdown
@@ -566,21 +611,22 @@ Note: no `filewriter/` adapter. Removed as over-engineering.
 ### Milestone Map
 
 ```
-Task  1:  Domain types (OnboardReport, FixPlan, ValidationResult, ProjectCache)
+Task  1:  Domain types (OnboardReport, FixPlan, ValidationResult, ProjectCache, DriftIssue)
 Task  2:  CacheStore port + outbound adapter
 Task  3:  ScanResult.AddFile/RemoveFile methods
-Task  4:  OnboardService -- compose existing infrastructure into OnboardReport
-Task  5:  CLAUDE.md renderer (markdown + JSON output)
-Task  6:  FixService -- safe fix identification and application
-Task  7:  FixService -- instruction generation for complex fixes
-Task  8:  ValidateService -- cache management with content-based invalidation
-Task  9:  ValidateService -- score delta computation
-Task 10:  ScoreService.ScoreWithData (score from pre-loaded data, no disk I/O)
-Task 11:  CLI commands: onboard, fix, validate
-Task 12:  MCP tools: openkraft_onboard, openkraft_fix, openkraft_validate
-Task 13:  Integration tests
-Task 14:  E2E tests
-Task 15:  Final verification
+Task  4:  Project norms computation (p90 function lines, file lines, parameters)
+Task  5:  OnboardService -- compose existing infrastructure into OnboardReport
+Task  6:  Consistency contract renderer (CLAUDE.md markdown + JSON output)
+Task  7:  FixService -- safe fix identification and application
+Task  8:  FixService -- drift correction instructions with project norms
+Task  9:  ValidateService -- cache management with content-based invalidation
+Task 10:  ValidateService -- drift detection and score delta computation
+Task 11:  ScoreService.ScoreWithData (score from pre-loaded data, no disk I/O)
+Task 12:  CLI commands: onboard, fix, validate
+Task 13:  MCP tools: openkraft_onboard, openkraft_fix, openkraft_validate
+Task 14:  Integration tests
+Task 15:  E2E tests
+Task 16:  Final verification
 ```
 
 ### Task Dependency Graph
@@ -588,33 +634,33 @@ Task 15:  Final verification
 ```
     [1] Domain types
     / |  \
-  [2] [3] |
-Cache AddFile
-   \  |  /
-    \ | /
-  [4] OnboardService -----> [5] CLAUDE.md renderer
+  [2] [3] [4]
+Cache Add  Norms
+   \  |   /
+    \ |  /
+  [5] OnboardService -----> [6] Contract renderer
    |                          |
-  [6] FixService (safe) <----+
+  [7] FixService (safe) <----+
    |
-  [7] FixService (instructions)
+  [8] FixService (drift instructions)
    |
-  [10] ScoreService.ScoreWithData
+  [11] ScoreService.ScoreWithData
    |
-  [8] ValidateService (cache) ---> [9] ValidateService (delta)
+  [9] ValidateService (cache) ---> [10] ValidateService (drift detection)
    |                                 |
    +------+------+------------------+
    |      |
- [11]   [12]
+ [12]   [13]
  CLI    MCP
  cmds   tools
    |      |
    +------+
       |
-    [13] Integration tests
+    [14] Integration tests
       |
-    [14] E2E tests
+    [15] E2E tests
       |
-    [15] Verification
+    [16] Verification
 ```
 
 ---
@@ -627,11 +673,11 @@ Cache AddFile
 - Create: `internal/domain/validate.go`
 - Create: `internal/domain/cache.go`
 
-Define all structs as specified in the Architecture Changes section. `ProjectCache.IsInvalidated` compares config and go.mod hashes.
+Define all structs as specified in Architecture Changes. `ProjectCache.IsInvalidated` compares config and go.mod hashes. `DriftIssue` includes `DriftType` enum. `Instruction` includes `ProjectNorm` evidence field.
 
-**Tests:** JSON marshaling/unmarshaling round-trips. `IsInvalidated` returns true when hashes differ.
+**Tests:** JSON round-trips. `IsInvalidated` logic. DriftType values.
 
-**Verify:** `go test ./internal/domain/ -run "TestOnboard|TestFix|TestValidat|TestCache" -v -count=1`
+**Verify:** `go test ./internal/domain/ -run "TestOnboard|TestFix|TestValidat|TestCache|TestDrift" -v -count=1`
 
 ---
 
@@ -642,7 +688,7 @@ Define all structs as specified in the Architecture Changes section. `ProjectCac
 - Create: `internal/adapters/outbound/cache/cache.go`
 - Create: `internal/adapters/outbound/cache/cache_test.go`
 
-Cache files stored as JSON in `.openkraft/cache/` with a hash of the project path as the filename. `Load` returns `nil, nil` if no cache exists. `Save` creates the cache directory if needed. `Invalidate` removes the cache file.
+Cache files stored as JSON in `.openkraft/cache/` with a hash of the project path as filename. `Load` returns `nil, nil` if no cache exists. `Save` creates directory if needed. `Invalidate` removes cache file.
 
 **Tests:** Save/load round-trip, load on non-existent cache, invalidation.
 
@@ -656,15 +702,36 @@ Cache files stored as JSON in `.openkraft/cache/` with a hash of the project pat
 - Modify: `internal/domain/model.go`
 - Add tests in `internal/domain/model_test.go`
 
-`AddFile(path)`: classifies path (Go file, test file, or other) and adds to the appropriate slices. `RemoveFile(path)`: removes from all slices. Both maintain slice consistency.
+`AddFile(path)`: classifies path (Go file, test file, or other) and adds to appropriate slices. `RemoveFile(path)`: removes from all slices. Both maintain consistency.
 
-**Tests:** Add a `.go` file -> appears in GoFiles and AllFiles. Add a `_test.go` -> appears in TestFiles, GoFiles, AllFiles. Remove a file -> disappears from all. Remove non-existent -> no-op.
+**Tests:** Add `.go` -> GoFiles + AllFiles. Add `_test.go` -> TestFiles + GoFiles + AllFiles. Remove -> disappears from all. Remove non-existent -> no-op.
 
 **Verify:** `go test ./internal/domain/ -run "TestScanResult" -v -count=1`
 
 ---
 
-## Task 4: OnboardService -- Compose Existing Infrastructure
+## Task 4: Project Norms Computation
+
+**Files:**
+- Create: `internal/domain/norms.go`
+- Create: `internal/domain/norms_test.go`
+
+Compute statistical norms from the actual codebase:
+- `ComputeNorms(analyzed map[string]*AnalyzedFile) ProjectNorms`
+- P90 of function line counts (not mean -- p90 captures "what's normal here")
+- P90 of file line counts
+- P90 of parameter counts
+- Dominant naming convention with percentage
+
+These norms are what make drift detection relative, not arbitrary. "Your function is 82 lines" means nothing. "Your function is 82 lines in a project where p90 is 50" means drift.
+
+**Tests:** Compute norms for known distributions. Verify p90 calculation. Edge cases: empty input, single file.
+
+**Verify:** `go test ./internal/domain/ -run "TestNorms" -v -count=1`
+
+---
+
+## Task 5: OnboardService -- Compose Existing Infrastructure
 
 **Files:**
 - Create: `internal/application/onboard_service.go`
@@ -676,102 +743,108 @@ Cache files stored as JSON in `.openkraft/cache/` with a hash of the project pat
 3. Analyze files via existing `CodeAnalyzer`
 4. Select golden module via existing `golden.SelectGolden`
 5. Extract blueprint via existing `golden.ExtractBlueprint`
-6. Detect naming convention by reusing bare/suffixed classification from discoverability scorer
-7. Detect build/test commands by parsing Makefile targets
-8. Analyze import graph for dependency rules
-9. Find interface-to-implementation mappings via AST
+6. Detect naming convention (reuse discoverability scorer logic)
+7. Compute project norms via `ComputeNorms` (Task 4)
+8. Detect build/test commands by parsing Makefile targets
+9. Analyze import graph for dependency rules
+10. Find interface-to-implementation mappings via AST
 
-Steps 1-6 are pure composition of existing code. Steps 7-9 are new logic.
+Steps 1-7 are composition of existing code. Steps 8-10 are new logic.
 
-**Tests:** Run against `testdata/go-hexagonal/perfect`. Verify detected layers, modules, golden module, naming convention.
+**Tests:** Run against `testdata/go-hexagonal/perfect`. Verify detected layers, modules, golden module, naming convention, norms.
 
 **Verify:** `go test ./internal/application/ -run TestOnboard -v -count=1`
 
 ---
 
-## Task 5: CLAUDE.md Renderer
+## Task 6: Consistency Contract Renderer
 
 **Files:**
-- Modify: `internal/application/onboard_service.go` -- add `RenderCLAUDEmd` and `RenderJSON`
+- Modify: `internal/application/onboard_service.go` -- add `RenderContract` and `RenderJSON`
 
-`RenderCLAUDEmd` produces markdown following the template. Uses `text/template` for clean separation. Output must be under 200 lines. Empty sections omitted entirely. `RenderJSON` marshals to indented JSON.
+`RenderContract` produces prescriptive markdown (MUST/ALWAYS/NEVER language). Uses `text/template`. Output under 200 lines. Empty sections omitted. `RenderJSON` marshals `OnboardReport` to indented JSON.
 
-**Tests:** Render against populated `OnboardReport`, verify markdown structure, verify line count under 200, verify JSON round-trip.
+**Tests:** Render against populated `OnboardReport`. Verify prescriptive language. Verify line count under 200. Verify JSON round-trip.
 
 **Verify:** `go test ./internal/application/ -run TestRender -v -count=1`
 
 ---
 
-## Task 6: FixService -- Safe Fixes
+## Task 7: FixService -- Safe Fixes
 
 **Files:**
 - Create: `internal/application/fix_service.go`
 - Create: `internal/application/fix_service_test.go`
 
-Safe fixes are limited to: CLAUDE.md generation (calls OnboardService), test stub creation (find missing `_test.go`), .golangci.yml generation. All safe fixes create new files only -- never modify existing files. Uses `os.WriteFile` and `os.MkdirAll` directly.
+Safe fixes: CLAUDE.md (calls OnboardService), test stubs, .golangci.yml. File creation only -- never modifies existing. Uses `os.WriteFile` directly.
 
-After applying fixes, runs `go build ./...` to verify compilation. If build fails, rolls back created files and returns error.
+After applying, runs `go build ./...` to verify. Rolls back on failure.
 
-**Tests:** Plan fixes for project missing CLAUDE.md. Plan fixes for project missing test files. Apply fixes creates files. Dry run creates no files. Build verification catches broken output.
+**Tests:** Plan fixes for missing CLAUDE.md. Plan fixes for missing tests. Apply creates files. Dry run creates nothing. Build check catches broken output.
 
 **Verify:** `go test ./internal/application/ -run TestFix -v -count=1`
 
 ---
 
-## Task 7: FixService -- Instructions
+## Task 8: FixService -- Drift Correction Instructions
 
 **Files:**
 - Modify: `internal/application/fix_service.go`
 
-Generate structured instructions for: package doc comments (suggest which packages need docs), long functions (AST split points), too many parameters (struct suggestion), dependency violations (correct import path), missing module files (golden module comparison), .cursorrules content, AGENTS.md content. Each instruction includes file, line, message, and priority.
+Generate instructions with `ProjectNorm` evidence:
+- Naming drift: "File uses suffixed but project is 92% bare"
+- Structure drift: "Module has 2 layers but golden has 4"
+- Size drift: "Function is 82 lines but project p90 is 50"
+- Dependency drift: "domain/ imports adapters/ -- violates project rule"
+- Missing package docs: "Package has no doc comment, see `internal/domain/` for project style"
 
-**Tests:** Instructions for 80-line function. Instructions for 6-parameter function. Instructions for missing package docs. Priority ordering.
+Each instruction includes `project_norm` field with the statistical or structural evidence.
+
+**Tests:** Instructions for naming drift. Instructions for structure gap vs golden. Instructions for oversized function vs p90. Priority ordering.
 
 **Verify:** `go test ./internal/application/ -run TestFixInstruction -v -count=1`
 
 ---
 
-## Task 8: ValidateService -- Cache Management
+## Task 9: ValidateService -- Cache Management
 
 **Files:**
 - Create: `internal/application/validate_service.go`
 - Create: `internal/application/validate_service_test.go`
 
-Cache lifecycle:
-1. Check cache via `CacheStore.Load`
-2. If missing or invalidated (go.mod/config hash changed), run full scan and save
-3. Process changed/added/deleted files and update cached data
-4. Pass to delta computation
+Cache lifecycle: load -> check hashes -> if invalid: full scan -> process changed/added/deleted -> pass to drift detection.
 
-Content-based invalidation. No time-based TTL.
+Content-based invalidation only. No TTL.
 
-**Tests:** First call creates cache. Second call uses cache (verify via mock call counts). Config change forces re-scan. go.mod change forces re-scan.
+**Tests:** First call creates cache. Second uses cache. Config change forces re-scan. go.mod change forces re-scan. Added/deleted files update ScanResult.
 
 **Verify:** `go test ./internal/application/ -run TestValidate -v -count=1`
 
 ---
 
-## Task 9: ValidateService -- Score Delta
+## Task 10: ValidateService -- Drift Detection and Score Delta
 
 **Files:**
 - Modify: `internal/application/validate_service.go`
 
-After merging updated file data: re-run all 6 scorers via `ScoreService.ScoreWithData`, compute per-category delta, compute overall delta, classify issues by severity, set status, generate suggestions.
+After merging data: re-run all 6 scorers via `ScoreService.ScoreWithData`, compute per-category delta, classify drift issues by type (`naming_drift`, `structure_drift`, `size_drift`, `dependency_drift`), set status, generate suggestions.
 
-**Tests:** Changed file improving code_health (positive delta). Changed file worsening structure (negative delta). Added file affects file counts. Deleted file removes from analysis. Error-severity issue sets status "fail". Strict mode with warnings sets status "fail".
+Drift classification uses project norms from OnboardReport to contextualize each issue.
 
-**Verify:** `go test ./internal/application/ -run TestValidateDelta -v -count=1`
+**Tests:** File introducing naming drift. File improving consistency. Added file affects structure. Deleted file. Error-severity drift -> "fail". Strict mode.
+
+**Verify:** `go test ./internal/application/ -run TestValidateDrift -v -count=1`
 
 ---
 
-## Task 10: ScoreService.ScoreWithData
+## Task 11: ScoreService.ScoreWithData
 
 **Files:**
 - Modify: `internal/application/score_service.go`
 
-New method `ScoreWithData(scan *ScanResult, modules []DetectedModule, analyzed map[string]*AnalyzedFile) *Score` that runs the 6 scorers with pre-loaded data. No disk I/O. This is the hot path for `validate` (<50ms).
+New method `ScoreWithData(scan *ScanResult, modules []DetectedModule, analyzed map[string]*AnalyzedFile) *Score` -- runs 6 scorers with pre-loaded data. No disk I/O. Hot path for validate (<50ms).
 
-The existing `ScoreProject` can be refactored to call `ScoreWithData` internally after loading data from disk.
+Refactor existing `ScoreProject` to call `ScoreWithData` internally.
 
 **Tests:** ScoreWithData produces same result as ScoreProject for same input.
 
@@ -779,84 +852,83 @@ The existing `ScoreProject` can be refactored to call `ScoreWithData` internally
 
 ---
 
-## Task 11: CLI Commands
+## Task 12: CLI Commands
 
 **Files:**
 - Create: `internal/adapters/inbound/cli/onboard.go`
 - Create: `internal/adapters/inbound/cli/fix.go`
 - Create: `internal/adapters/inbound/cli/validate.go`
-- Modify: `internal/adapters/inbound/cli/root.go` -- register all three commands
+- Modify: `internal/adapters/inbound/cli/root.go` -- register commands
 
-Three Cobra commands wiring the corresponding application services. Styled output using lipgloss (consistent with existing `score` command).
+Three Cobra commands. Styled output using lipgloss.
 
-`onboard` prints content to stdout and writes file. `fix` shows applied fixes and instructions with priority colors. `validate` shows status, score impact, and suggestions.
+`onboard` prints contract + writes file. `fix` shows applied fixes + drift instructions with norms. `validate` shows status + drift issues + score impact.
 
-**Tests:** Test each command with mock services. Verify flag parsing. Verify exit codes.
+**Tests:** Flag parsing. Exit codes.
 
 **Verify:** `go test ./internal/adapters/inbound/cli/ -run "TestOnboard|TestFixCmd|TestValidateCmd" -v -count=1`
 
 ---
 
-## Task 12: MCP Tools
+## Task 13: MCP Tools
 
 **Files:**
 - Modify: `internal/adapters/inbound/mcp/tools.go`
 
-Register three new tools: `openkraft_onboard`, `openkraft_fix`, `openkraft_validate`. Each tool creates its service, calls the handler, and returns JSON (or markdown for onboard with format=md). `openkraft_validate` accepts `changed`, `added`, and `deleted` as array parameters.
+Register: `openkraft_onboard`, `openkraft_fix`, `openkraft_validate`. Validate accepts `changed`, `added`, `deleted` as array parameters.
 
-**Tests:** Test each tool handler returns valid content for test fixtures.
+**Tests:** Tool handlers return valid content for test fixtures.
 
 **Verify:** `go test ./internal/adapters/inbound/mcp/ -run "TestOnboard|TestFix|TestValidate" -v -count=1`
 
 ---
 
-## Task 13: Integration Tests
+## Task 14: Integration Tests
 
 **Files:**
 - Create: `internal/application/integration_test.go`
 
-Tests with real scoring (no mocks) on test fixtures:
-1. OnboardService against `testdata/go-hexagonal/perfect` -- verify complete OnboardReport
-2. FixService against a fixture with known issues -- verify correct fix classification
-3. ValidateService incremental check -- verify score delta computation
-4. Full workflow: onboard -> fix -> validate -> verify score improvement
+1. OnboardService against `testdata/go-hexagonal/perfect` -- verify complete report with norms
+2. FixService against fixture with known drift -- verify correct classification and project_norm evidence
+3. ValidateService incremental -- verify drift detection and score delta
+4. Full workflow: onboard -> fix -> validate -> verify drift resolved
 
 **Verify:** `go test ./internal/application/ -run TestIntegration -v -count=1`
 
 ---
 
-## Task 14: E2E Tests
+## Task 15: E2E Tests
 
 **Files:**
 - Modify: `tests/e2e/e2e_test.go`
 
-Tests:
-1. `openkraft onboard testdata/go-hexagonal/perfect` -- verify CLAUDE.md file created
-2. `openkraft onboard --format json` -- verify valid JSON output
-3. `openkraft fix --dry-run testdata/go-hexagonal/minimal` -- verify fix plan without file changes
-4. `openkraft validate <file>` -- verify pass status
-5. Full agent loop: onboard -> change -> validate -> fix -> validate
+1. `openkraft onboard` -- verify CLAUDE.md created with prescriptive language
+2. `openkraft onboard --format json` -- verify JSON with norms
+3. `openkraft fix --dry-run` -- verify drift instructions with project_norm
+4. `openkraft validate <file>` -- verify drift detection
+5. Full agent loop: onboard -> introduce drift -> validate catches it -> fix corrects it
 
 **Verify:** `go test ./tests/e2e/ -v -count=1`
 
 ---
 
-## Task 15: Final Verification
+## Task 16: Final Verification
 
 ```bash
 go clean -testcache
 go test ./... -race -count=1
 go build -o ./openkraft ./cmd/openkraft
 
-# Test onboard
+# Consistency contract
 ./openkraft onboard .
 cat CLAUDE.md
 wc -l CLAUDE.md  # must be under 200
+grep -c "MUST\|ALWAYS\|NEVER" CLAUDE.md  # must have prescriptive language
 
-# Test fix
+# Drift detection
 ./openkraft fix --dry-run .
 
-# Test validate
+# Incremental validation
 ./openkraft validate internal/domain/config.go
 
 # Performance
@@ -873,29 +945,30 @@ time ./openkraft validate internal/domain/config.go  # must be <500ms (cached)
 | `openkraft onboard` latency | <2s for a 50-file project |
 | `openkraft validate` latency | <500ms for incremental checks |
 | `openkraft fix` correctness | Safe fixes produce no broken files (compile check) |
-| CLAUDE.md quality | Under 200 lines, every section populated from analysis |
-| Agent workflow | An AI agent using openkraft MCP tools produces higher-quality code than without |
+| Consistency contract quality | Under 200 lines, prescriptive language, every rule backed by analysis |
+| Drift detection accuracy | Catches naming, structure, size, and dependency drift with zero false positives on well-maintained repos |
+| Instructions include evidence | Every drift instruction has `project_norm` field with statistical or structural proof |
 | Backwards compatibility | Existing commands unchanged, new commands are additive |
 
 ## Risk Mitigation
 
 | Risk | Mitigation |
 |---|---|
-| CLAUDE.md generation produces generic content | Every line must trace to a specific detection. No static filler text. |
-| Safe fixes break compilation | Run `go build` after applying fixes. Roll back on failure. |
-| Cache invalidation misses changes | Content-based invalidation (config + go.mod hashes). Provide `--no-cache`. |
-| Incremental validation misses cross-file issues | Re-run all 6 scorers (not selective). Re-detect modules after file changes. |
-| MCP tool response too large | Cap CLAUDE.md at 200 lines. Cap fix instructions at 50 per call. |
-| Performance regression on large codebases | Profile with pprof. Cache AST parsing. Parallelize file analysis. |
-| Deleted/renamed files not handled | Explicit `deleted` parameter in validate. ScanResult.RemoveFile maintains consistency. |
+| Contract generates generic content | Every line traces to a detection. No filler. Prescriptive language only. |
+| Project norms are skewed by outliers | Use p90, not mean. Exclude generated/vendor files. Require minimum sample size (10+ functions). |
+| Safe fixes break compilation | Run `go build` after applying. Roll back on failure. |
+| Cache invalidation misses changes | Content-based (config + go.mod hashes). Provide `--no-cache`. |
+| Drift detection is too noisy | Only flag drift when >10% divergence from project norm. Configurable sensitivity. |
+| Validate misses cross-file issues | Re-run all 6 scorers. Re-detect modules after changes. |
+| Deleted/renamed files not handled | Explicit `deleted` parameter. ScanResult.RemoveFile maintains consistency. |
 
 ## Execution Order
 
 ```
-Week 1: Tasks 1-3   (domain types, cache adapter, ScanResult methods)
-Week 2: Tasks 4-5   (onboard service + renderer)
-Week 3: Tasks 6-7   (fix service -- safe fixes + instructions)
-Week 4: Tasks 8-10  (validate service + ScoreWithData)
-Week 5: Tasks 11-12 (CLI commands + MCP tools)
-Week 6: Tasks 13-15 (integration tests, E2E tests, verification)
+Week 1: Tasks 1-4   (domain types, cache adapter, ScanResult methods, norms computation)
+Week 2: Tasks 5-6   (onboard service + contract renderer)
+Week 3: Tasks 7-8   (fix service -- safe fixes + drift instructions)
+Week 4: Tasks 9-11  (validate service + ScoreWithData)
+Week 5: Tasks 12-13 (CLI commands + MCP tools)
+Week 6: Tasks 14-16 (integration tests, E2E tests, verification)
 ```
