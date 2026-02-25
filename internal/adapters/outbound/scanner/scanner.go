@@ -87,5 +87,59 @@ func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.
 		return nil
 	})
 
+	if err == nil {
+		populateFileMetadata(absPath, result)
+	}
+
 	return result, err
+}
+
+const maxReadSize = 16 * 1024 // 16KB cap for file reads.
+
+// populateFileMetadata reads sizes and content for detected context files.
+func populateFileMetadata(rootPath string, result *domain.ScanResult) {
+	readSize := func(name string) (int, []byte) {
+		data, err := os.ReadFile(filepath.Join(rootPath, name))
+		if err != nil {
+			return 0, nil
+		}
+		if len(data) > maxReadSize {
+			data = data[:maxReadSize]
+		}
+		return len(data), data
+	}
+
+	if result.HasClaudeMD {
+		size, data := readSize("CLAUDE.md")
+		result.ClaudeMDSize = size
+		result.ClaudeMDContent = string(data)
+	}
+
+	if result.HasAgentsMD {
+		size, _ := readSize("AGENTS.md")
+		result.AgentsMDSize = size
+	}
+
+	if result.HasCursorRules {
+		size, _ := readSize(".cursorrules")
+		result.CursorRulesSize = size
+	}
+
+	// README.md
+	for _, f := range result.AllFiles {
+		if strings.EqualFold(f, "readme.md") {
+			size, _ := readSize(f)
+			result.ReadmeSize = size
+			break
+		}
+	}
+
+	// copilot-instructions.md
+	for _, f := range result.AllFiles {
+		lower := strings.ToLower(f)
+		if lower == "copilot-instructions.md" || lower == ".github/copilot-instructions.md" {
+			result.HasCopilotInstructions = true
+			break
+		}
+	}
 }

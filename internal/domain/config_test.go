@@ -20,70 +20,67 @@ func TestDefaultConfig_ChangesNothing(t *testing.T) {
 func TestDefaultConfigForType_API(t *testing.T) {
 	cfg := domain.DefaultConfigForType(domain.ProjectTypeAPI)
 	assert.Equal(t, domain.ProjectTypeAPI, cfg.ProjectType)
-	// API is the baseline — no skips, standard weights
 	assert.Empty(t, cfg.Skip.SubMetrics)
-	assert.InDelta(t, 0.25, cfg.Weights["architecture"], 0.001)
-	assert.InDelta(t, 0.20, cfg.Weights["patterns"], 0.001)
+	assert.InDelta(t, 0.25, cfg.Weights["code_health"], 0.001)
+	assert.InDelta(t, 0.15, cfg.Weights["structure"], 0.001)
 }
 
 func TestDefaultConfigForType_CLI(t *testing.T) {
 	cfg := domain.DefaultConfigForType(domain.ProjectTypeCLI)
 	assert.Equal(t, domain.ProjectTypeCLI, cfg.ProjectType)
-	assert.Contains(t, cfg.Skip.SubMetrics, "handler_patterns")
-	assert.Contains(t, cfg.Skip.SubMetrics, "repository_patterns")
-	assert.InDelta(t, 0.25, cfg.Weights["conventions"], 0.001)
-	assert.InDelta(t, 0.10, cfg.Weights["patterns"], 0.001)
+	assert.Contains(t, cfg.Skip.SubMetrics, "interface_contracts")
+	assert.Contains(t, cfg.Skip.SubMetrics, "module_completeness")
+	assert.InDelta(t, 0.20, cfg.Weights["discoverability"], 0.001)
+	assert.InDelta(t, 0.10, cfg.Weights["structure"], 0.001)
 }
 
 func TestDefaultConfigForType_Library(t *testing.T) {
 	cfg := domain.DefaultConfigForType(domain.ProjectTypeLibrary)
 	assert.Equal(t, domain.ProjectTypeLibrary, cfg.ProjectType)
-	assert.Contains(t, cfg.Skip.SubMetrics, "handler_patterns")
-	assert.Contains(t, cfg.Skip.SubMetrics, "repository_patterns")
-	assert.Contains(t, cfg.Skip.SubMetrics, "port_patterns")
-	assert.InDelta(t, 0.25, cfg.Weights["tests"], 0.001)
+	assert.Contains(t, cfg.Skip.SubMetrics, "interface_contracts")
+	assert.InDelta(t, 0.25, cfg.Weights["verifiability"], 0.001)
 }
 
 func TestDefaultConfigForType_Microservice(t *testing.T) {
 	cfg := domain.DefaultConfigForType(domain.ProjectTypeMicroservice)
 	assert.Equal(t, domain.ProjectTypeMicroservice, cfg.ProjectType)
 	assert.Empty(t, cfg.Skip.SubMetrics)
-	assert.InDelta(t, 0.15, cfg.Weights["completeness"], 0.001)
+	assert.InDelta(t, 0.20, cfg.Weights["structure"], 0.001)
 }
 
 func TestIsSkippedCategory(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Skip: domain.SkipConfig{Categories: []string{"completeness", "ai_context"}},
+		Skip: domain.SkipConfig{Categories: []string{"structure", "context_quality"}},
 	}
-	assert.True(t, cfg.IsSkippedCategory("completeness"))
-	assert.True(t, cfg.IsSkippedCategory("ai_context"))
-	assert.False(t, cfg.IsSkippedCategory("tests"))
+	assert.True(t, cfg.IsSkippedCategory("structure"))
+	assert.True(t, cfg.IsSkippedCategory("context_quality"))
+	assert.False(t, cfg.IsSkippedCategory("verifiability"))
 }
 
 func TestIsSkippedCategory_Empty(t *testing.T) {
 	cfg := domain.DefaultConfig()
-	assert.False(t, cfg.IsSkippedCategory("tests"))
+	assert.False(t, cfg.IsSkippedCategory("verifiability"))
 }
 
 func TestIsSkippedSubMetric(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Skip: domain.SkipConfig{SubMetrics: []string{"handler_patterns", "repository_patterns"}},
+		Skip: domain.SkipConfig{SubMetrics: []string{"interface_contracts", "module_completeness"}},
 	}
-	assert.True(t, cfg.IsSkippedSubMetric("handler_patterns"))
-	assert.True(t, cfg.IsSkippedSubMetric("repository_patterns"))
-	assert.False(t, cfg.IsSkippedSubMetric("service_patterns"))
+	assert.True(t, cfg.IsSkippedSubMetric("interface_contracts"))
+	assert.True(t, cfg.IsSkippedSubMetric("module_completeness"))
+	assert.False(t, cfg.IsSkippedSubMetric("expected_layers"))
 }
 
 func TestEffectiveWeight_Override(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Weights: map[string]float64{"tests": 0.30},
+		Weights: map[string]float64{"verifiability": 0.30},
 	}
-	assert.InDelta(t, 0.30, cfg.EffectiveWeight("tests", 0.15), 0.001)
+	assert.InDelta(t, 0.30, cfg.EffectiveWeight("verifiability", 0.15), 0.001)
 }
 
 func TestEffectiveWeight_FallbackToDefault(t *testing.T) {
 	cfg := domain.DefaultConfig()
-	assert.InDelta(t, 0.15, cfg.EffectiveWeight("tests", 0.15), 0.001)
+	assert.InDelta(t, 0.15, cfg.EffectiveWeight("verifiability", 0.15), 0.001)
 }
 
 // --- Validation tests ---
@@ -109,8 +106,8 @@ func TestValidate_UnknownProjectType(t *testing.T) {
 func TestValidate_WeightsSumTooHigh(t *testing.T) {
 	cfg := domain.ProjectConfig{
 		Weights: map[string]float64{
-			"architecture": 0.50, "conventions": 0.50, "patterns": 0.50,
-			"tests": 0.15, "ai_context": 0.10, "completeness": 0.10,
+			"code_health": 0.50, "discoverability": 0.50, "structure": 0.50,
+			"verifiability": 0.15, "context_quality": 0.10, "predictability": 0.10,
 		},
 	}
 	err := cfg.Validate()
@@ -121,8 +118,8 @@ func TestValidate_WeightsSumTooHigh(t *testing.T) {
 func TestValidate_WeightsSumTooLow(t *testing.T) {
 	cfg := domain.ProjectConfig{
 		Weights: map[string]float64{
-			"architecture": 0.05, "conventions": 0.05, "patterns": 0.05,
-			"tests": 0.05, "ai_context": 0.05, "completeness": 0.05,
+			"code_health": 0.05, "discoverability": 0.05, "structure": 0.05,
+			"verifiability": 0.05, "context_quality": 0.05, "predictability": 0.05,
 		},
 	}
 	err := cfg.Validate()
@@ -159,7 +156,7 @@ func TestValidate_InvalidSubMetricInSkip(t *testing.T) {
 
 func TestValidate_ThresholdOutOfRange(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		MinThresholds: map[string]int{"tests": 150},
+		MinThresholds: map[string]int{"verifiability": 150},
 	}
 	err := cfg.Validate()
 	assert.Error(t, err)
@@ -185,11 +182,9 @@ func TestValidate_AllCategoriesSkipped(t *testing.T) {
 }
 
 func TestValidate_PartialWeightsValid(t *testing.T) {
-	// Only specifying some weights is OK — they're merged with defaults at runtime
 	cfg := domain.ProjectConfig{
-		Weights: map[string]float64{"tests": 0.30},
+		Weights: map[string]float64{"verifiability": 0.30},
 	}
-	// Partial weights don't need to sum to 1.0
 	assert.NoError(t, cfg.Validate())
 }
 

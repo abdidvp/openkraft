@@ -22,28 +22,30 @@ var ValidProjectTypes = []ProjectType{
 
 // ValidCategories enumerates all scoring category names.
 var ValidCategories = []string{
-	"architecture", "conventions", "patterns",
-	"tests", "ai_context", "completeness",
+	"code_health", "discoverability", "structure",
+	"verifiability", "context_quality", "predictability",
 }
 
 // ValidSubMetrics enumerates all scoring sub-metric names.
 var ValidSubMetrics = []string{
-	// architecture
-	"consistent_module_structure", "layer_separation",
-	"dependency_direction", "module_boundary_clarity", "architecture_documentation",
-	// conventions
-	"naming_consistency", "error_handling", "import_ordering",
-	"file_organization", "code_style",
-	// patterns
-	"entity_patterns", "repository_patterns", "service_patterns",
-	"port_patterns", "handler_patterns",
-	// tests
-	"unit_test_presence", "integration_tests", "test_helpers",
-	"test_fixtures", "ci_config",
-	// ai_context
-	"claude_md", "cursor_rules", "agents_md", "openkraft_dir",
-	// completeness
-	"file_completeness", "structural_completeness", "documentation_completeness",
+	// code_health
+	"function_size", "file_size", "nesting_depth",
+	"parameter_count", "complex_conditionals",
+	// discoverability
+	"naming_uniqueness", "file_naming_conventions",
+	"predictable_structure", "dependency_direction",
+	// structure
+	"expected_layers", "expected_files",
+	"interface_contracts", "module_completeness",
+	// verifiability
+	"test_presence", "test_naming",
+	"build_reproducibility", "type_safety_signals",
+	// context_quality
+	"ai_context_files", "package_documentation",
+	"architecture_docs", "canonical_examples",
+	// predictability
+	"self_describing_names", "explicit_dependencies",
+	"error_message_quality", "consistent_patterns",
 }
 
 // ProjectConfig holds project-level configuration loaded from .openkraft.yaml.
@@ -73,28 +75,28 @@ func DefaultConfigForType(pt ProjectType) ProjectConfig {
 	switch pt {
 	case ProjectTypeCLI:
 		cfg.Weights = map[string]float64{
-			"architecture": 0.20, "conventions": 0.25, "patterns": 0.10,
-			"tests": 0.20, "ai_context": 0.10, "completeness": 0.15,
+			"code_health": 0.25, "discoverability": 0.20, "structure": 0.10,
+			"verifiability": 0.20, "context_quality": 0.10, "predictability": 0.15,
 		}
-		cfg.Skip.SubMetrics = []string{"handler_patterns", "repository_patterns"}
+		cfg.Skip.SubMetrics = []string{"interface_contracts", "module_completeness"}
 
 	case ProjectTypeLibrary:
 		cfg.Weights = map[string]float64{
-			"architecture": 0.15, "conventions": 0.25, "patterns": 0.15,
-			"tests": 0.25, "ai_context": 0.10, "completeness": 0.10,
+			"code_health": 0.20, "discoverability": 0.20, "structure": 0.10,
+			"verifiability": 0.25, "context_quality": 0.15, "predictability": 0.10,
 		}
-		cfg.Skip.SubMetrics = []string{"handler_patterns", "repository_patterns", "port_patterns"}
+		cfg.Skip.SubMetrics = []string{"interface_contracts"}
 
 	case ProjectTypeMicroservice:
 		cfg.Weights = map[string]float64{
-			"architecture": 0.25, "conventions": 0.20, "patterns": 0.20,
-			"tests": 0.15, "ai_context": 0.05, "completeness": 0.15,
+			"code_health": 0.25, "discoverability": 0.20, "structure": 0.20,
+			"verifiability": 0.15, "context_quality": 0.10, "predictability": 0.10,
 		}
 
 	default: // api or unrecognized
 		cfg.Weights = map[string]float64{
-			"architecture": 0.25, "conventions": 0.20, "patterns": 0.20,
-			"tests": 0.15, "ai_context": 0.10, "completeness": 0.10,
+			"code_health": 0.25, "discoverability": 0.20, "structure": 0.15,
+			"verifiability": 0.15, "context_quality": 0.15, "predictability": 0.10,
 		}
 	}
 

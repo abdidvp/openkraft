@@ -55,6 +55,16 @@ func TestGoParser_FindsInterfaces(t *testing.T) {
 	assert.Contains(t, result.Interfaces, "TaxRuleRepository")
 }
 
+func TestGoParser_ExtractsInterfaceMethods(t *testing.T) {
+	p := parser.New()
+	af, err := p.AnalyzeFile(taxPortsPath)
+	require.NoError(t, err)
+	assert.NotEmpty(t, af.InterfaceDefs)
+	for _, iface := range af.InterfaceDefs {
+		assert.NotEmpty(t, iface.Methods, "interface %s should have methods", iface.Name)
+	}
+}
+
 func TestGoParser_FindsImports(t *testing.T) {
 	p := parser.New()
 	result, err := p.AnalyzeFile(taxRulePath)

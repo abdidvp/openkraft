@@ -81,6 +81,17 @@ func TestFileScanner_CustomExcludePaths(t *testing.T) {
 	}
 }
 
+func TestFileScanner_PopulatesFileMetadata(t *testing.T) {
+	s := scanner.New()
+	result, err := s.Scan(fixtureDir)
+	require.NoError(t, err)
+
+	// Perfect fixture has CLAUDE.md and .cursorrules.
+	assert.Greater(t, result.ClaudeMDSize, 0, "should read CLAUDE.md size")
+	assert.NotEmpty(t, result.ClaudeMDContent, "should read CLAUDE.md content")
+	assert.Greater(t, result.CursorRulesSize, 0, "should read .cursorrules size")
+}
+
 func TestFileScanner_AIContextOnlyFromRoot(t *testing.T) {
 	// The perfect fixture has CLAUDE.md and .cursorrules,
 	// but when scanning the project root, those should not
