@@ -60,6 +60,7 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 		if err != nil {
 			continue // skip files that can't be parsed
 		}
+		af.Path = f // store relative path for clean issue reporting
 		analyzed[f] = af
 	}
 
@@ -99,6 +100,9 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 // BuildProfile constructs a ScoringProfile from config defaults and user overrides.
 func BuildProfile(cfg domain.ProjectConfig) domain.ScoringProfile {
 	base := domain.DefaultProfileForType(cfg.ProjectType)
+	if cfg.Profile == nil {
+		return base
+	}
 	p := cfg.Profile
 
 	if len(p.ExpectedLayers) > 0 {
@@ -175,6 +179,7 @@ func filterSubMetrics(cat domain.CategoryScore, cfg domain.ProjectConfig) domain
 	for i, sm := range cat.SubMetrics {
 		if cfg.IsSkippedSubMetric(sm.Name) {
 			cat.SubMetrics[i].Skipped = true
+			cat.SubMetrics[i].Score = 0
 			hasSkipped = true
 			continue
 		}
@@ -185,6 +190,17 @@ func filterSubMetrics(cat domain.CategoryScore, cfg domain.ProjectConfig) domain
 	// Recalculate category score if sub-metrics were skipped
 	if hasSkipped && totalPoints > 0 {
 		cat.Score = int(math.Round(float64(earnedPoints) / float64(totalPoints) * 100))
+	}
+
+	// Remove issues associated with skipped sub-metrics
+	if hasSkipped {
+		var filtered []domain.Issue
+		for _, issue := range cat.Issues {
+			if issue.SubMetric == "" || !cfg.IsSkippedSubMetric(issue.SubMetric) {
+				filtered = append(filtered, issue)
+			}
+		}
+		cat.Issues = filtered
 	}
 
 	return cat

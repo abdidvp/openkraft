@@ -55,7 +55,7 @@ type ProjectConfig struct {
 	Skip          SkipConfig         `yaml:"skip"            json:"skip,omitempty"`
 	ExcludePaths  []string           `yaml:"exclude_paths"   json:"exclude_paths,omitempty"`
 	MinThresholds map[string]int     `yaml:"min_thresholds"  json:"min_thresholds,omitempty"`
-	Profile       ProfileOverrides   `yaml:"profile"         json:"profile,omitempty"`
+	Profile       *ProfileOverrides  `yaml:"profile,omitempty" json:"profile,omitempty"`
 }
 
 // ProfileOverrides allows users to override specific scoring profile parameters.
@@ -206,8 +206,10 @@ func (c ProjectConfig) Validate() error {
 	}
 
 	// 8. profile validation
-	if err := c.Profile.validate(); err != nil {
-		return err
+	if c.Profile != nil {
+		if err := c.Profile.validate(); err != nil {
+			return err
+		}
 	}
 
 	return nil

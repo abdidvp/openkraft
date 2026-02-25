@@ -303,9 +303,10 @@ func collectStructureIssues(modules []domain.DetectedModule, analyzed map[string
 		}
 		if hasDomainOrApp && !hasInterface {
 			issues = append(issues, domain.Issue{
-				Severity: domain.SeverityWarning,
-				Category: "structure",
-				Message:  fmt.Sprintf("module %q has domain/application layer but no port interfaces", m.Name),
+				Severity:  domain.SeverityWarning,
+				Category:  "structure",
+				SubMetric: "interface_contracts",
+				Message:   fmt.Sprintf("module %q has domain/application layer but no port interfaces", m.Name),
 			})
 		}
 	}

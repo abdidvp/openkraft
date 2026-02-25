@@ -122,6 +122,7 @@ func TestScoreVerifiability_BuildReproducibilitySignals(t *testing.T) {
 			"main.go",
 			"go.sum",
 			"Makefile",
+			".golangci.yml",
 		},
 		HasCIConfig: true,
 	}
@@ -130,7 +131,7 @@ func TestScoreVerifiability_BuildReproducibilitySignals(t *testing.T) {
 
 	buildRepro := result.SubMetrics[2]
 	assert.Equal(t, "build_reproducibility", buildRepro.Name)
-	assert.Equal(t, 25, buildRepro.Score) // 10 + 8 + 7 = 25
+	assert.Equal(t, 25, buildRepro.Score) // 10 + 7 + 5 + 3 = 25
 }
 
 func TestScoreVerifiability_CustomTestRatio(t *testing.T) {

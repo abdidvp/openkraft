@@ -94,6 +94,7 @@ func ComputeOverallScore(categories []CategoryScore) int {
 type Issue struct {
 	Severity     string `json:"severity"`
 	Category     string `json:"category"`
+	SubMetric    string `json:"sub_metric,omitempty"`
 	File         string `json:"file,omitempty"`
 	Line         int    `json:"line,omitempty"`
 	Message      string `json:"message"`

@@ -192,13 +192,13 @@ func TestValidate_PartialWeightsValid(t *testing.T) {
 
 func TestValidate_ProfileNamingConventionValid(t *testing.T) {
 	for _, nc := range []string{"", "auto", "bare", "suffixed"} {
-		cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{NamingConvention: nc}}
+		cfg := domain.ProjectConfig{Profile: &domain.ProfileOverrides{NamingConvention: nc}}
 		assert.NoError(t, cfg.Validate(), "naming_convention %q should be valid", nc)
 	}
 }
 
 func TestValidate_ProfileNamingConventionInvalid(t *testing.T) {
-	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{NamingConvention: "camelCase"}}
+	cfg := domain.ProjectConfig{Profile: &domain.ProfileOverrides{NamingConvention: "camelCase"}}
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown naming_convention")
@@ -206,7 +206,7 @@ func TestValidate_ProfileNamingConventionInvalid(t *testing.T) {
 
 func TestValidate_ProfileNegativeThreshold(t *testing.T) {
 	neg := -1
-	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MaxFunctionLines: &neg}}
+	cfg := domain.ProjectConfig{Profile: &domain.ProfileOverrides{MaxFunctionLines: &neg}}
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "max_function_lines")
@@ -215,7 +215,7 @@ func TestValidate_ProfileNegativeThreshold(t *testing.T) {
 
 func TestValidate_ProfileZeroThreshold(t *testing.T) {
 	zero := 0
-	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MaxParameters: &zero}}
+	cfg := domain.ProjectConfig{Profile: &domain.ProfileOverrides{MaxParameters: &zero}}
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "max_parameters")
@@ -223,7 +223,7 @@ func TestValidate_ProfileZeroThreshold(t *testing.T) {
 
 func TestValidate_ProfileTestRatioOutOfRange(t *testing.T) {
 	ratio := 1.5
-	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MinTestRatio: &ratio}}
+	cfg := domain.ProjectConfig{Profile: &domain.ProfileOverrides{MinTestRatio: &ratio}}
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "min_test_ratio")
@@ -231,7 +231,7 @@ func TestValidate_ProfileTestRatioOutOfRange(t *testing.T) {
 
 func TestValidate_ProfileContextFileEmptyName(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			ContextFiles: []domain.ContextFileSpec{{Name: "", Points: 10}},
 		},
 	}
@@ -242,7 +242,7 @@ func TestValidate_ProfileContextFileEmptyName(t *testing.T) {
 
 func TestValidate_ProfileContextFileZeroPoints(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			ContextFiles: []domain.ContextFileSpec{{Name: "CLAUDE.md", Points: 0}},
 		},
 	}
@@ -256,7 +256,7 @@ func TestValidate_ProfileValidOverrides(t *testing.T) {
 	maxFile := 500
 	ratio := 0.7
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			ExpectedLayers:   []string{"domain", "infra"},
 			NamingConvention: "bare",
 			MaxFunctionLines: &maxFunc,

@@ -18,7 +18,7 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 
 	sm1 := scoreNamingUniqueness(analyzed)
 	sm2 := scoreFileNamingConventions(profile, scan)
-	sm3 := scorePredictableStructure(modules)
+	sm3 := scorePredictableStructure(profile, modules, scan)
 	sm4 := scoreDiscoverabilityDependencyDirection(modules, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
@@ -174,8 +174,9 @@ func suffixReuse(goFiles []string) float64 {
 // scorePredictableStructure (25 pts): 3-signal composite measuring structural consistency.
 //   - Layer consistency (50%): Jaccard of normalized layer sets across modules.
 //   - Suffix Jaccard (30%): Jaccard of role-indicating file suffixes across modules.
+//     When naming convention is "bare", suffix Jaccard is replaced with full credit.
 //   - File count similarity (20%): min(a,b)/max(a,b) averaged across pairs.
-func scorePredictableStructure(modules []domain.DetectedModule) domain.SubMetric {
+func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult) domain.SubMetric {
 	sm := domain.SubMetric{Name: "predictable_structure", Points: 25}
 
 	if len(modules) <= 1 {
@@ -186,6 +187,35 @@ func scorePredictableStructure(modules []domain.DetectedModule) domain.SubMetric
 			sm.Detail = "no modules detected"
 		}
 		return sm
+	}
+
+	// Detect naming convention: explicit from profile, or auto-detect from scan.
+	isBareNaming := false
+	switch profile.NamingConvention {
+	case "bare":
+		isBareNaming = true
+	case "suffixed":
+		isBareNaming = false
+	default: // "auto" — detect from scan
+		if scan != nil {
+			bare, suffixed := 0, 0
+			for _, f := range scan.GoFiles {
+				base := filepath.Base(f)
+				if strings.HasSuffix(base, "_test.go") {
+					continue
+				}
+				name := strings.TrimSuffix(base, ".go")
+				if name == "main" || name == "doc" {
+					continue
+				}
+				if strings.Contains(name, "_") {
+					suffixed++
+				} else {
+					bare++
+				}
+			}
+			isBareNaming = bare > suffixed
+		}
 	}
 
 	// Build per-module layer sets, suffix sets, and file counts.
@@ -211,7 +241,6 @@ func scorePredictableStructure(modules []domain.DetectedModule) domain.SubMetric
 			if idx := strings.LastIndex(name, "_"); idx >= 0 {
 				suffixSets[i][name[idx:]] = true
 			} else {
-				// No underscore — use the full filename for cross-module comparison.
 				suffixSets[i][name] = true
 			}
 		}
@@ -227,7 +256,13 @@ func scorePredictableStructure(modules []domain.DetectedModule) domain.SubMetric
 				continue
 			}
 			totalLayer += jaccard(layerSets[i], layerSets[j])
-			totalSuffix += jaccard(suffixSets[i], suffixSets[j])
+			if isBareNaming {
+				// Bare naming has no meaningful suffixes — award full credit
+				// since consistency is measured by scoreFileNamingConventions.
+				totalSuffix += 1.0
+			} else {
+				totalSuffix += jaccard(suffixSets[i], suffixSets[j])
+			}
 			a, b := float64(fileCounts[i]), float64(fileCounts[j])
 			if a > 0 || b > 0 {
 				mn, mx := a, b
@@ -257,8 +292,12 @@ func scorePredictableStructure(modules []domain.DetectedModule) domain.SubMetric
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
-	sm.Detail = fmt.Sprintf("layers=%.0f%%, suffixes=%.0f%%, file-count=%.0f%% across %d modules",
-		avgLayer*100, avgSuffix*100, avgFileCount*100, len(modules))
+	suffixLabel := fmt.Sprintf("suffixes=%.0f%%", avgSuffix*100)
+	if isBareNaming {
+		suffixLabel = "naming=bare(ok)"
+	}
+	sm.Detail = fmt.Sprintf("layers=%.0f%%, %s, file-count=%.0f%% across %d modules",
+		avgLayer*100, suffixLabel, avgFileCount*100, len(modules))
 	return sm
 }
 

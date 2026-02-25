@@ -18,7 +18,7 @@ func ScoreContextQuality(profile *domain.ScoringProfile, scan *domain.ScanResult
 	sm1 := scoreAIContextFiles(profile, scan)
 	sm2 := scorePackageDocumentation(analyzed)
 	sm3 := scoreArchitectureDocs(scan)
-	sm4 := scoreCanonicalExamples(scan)
+	sm4 := scoreCanonicalExamples(scan, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
 
@@ -192,8 +192,8 @@ func scoreArchitectureDocs(scan *domain.ScanResult) domain.SubMetric {
 	return sm
 }
 
-// scoreCanonicalExamples (25 pts): example_test.go files + CLAUDE.md pattern references.
-func scoreCanonicalExamples(scan *domain.ScanResult) domain.SubMetric {
+// scoreCanonicalExamples (25 pts): example_test.go files + Example* functions + CLAUDE.md references.
+func scoreCanonicalExamples(scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "canonical_examples", Points: 25}
 
 	if scan == nil {
@@ -204,20 +204,41 @@ func scoreCanonicalExamples(scan *domain.ScanResult) domain.SubMetric {
 	points := 0
 	found := []string{}
 
-	// example_test.go files (15 pts)
-	exampleCount := 0
+	// example_test.go files (10 pts)
+	exampleFileCount := 0
 	for _, f := range scan.AllFiles {
 		if strings.HasSuffix(f, "example_test.go") || strings.Contains(f, "_example_test.go") {
-			exampleCount++
+			exampleFileCount++
 		}
 	}
-	if exampleCount > 0 {
-		if exampleCount >= 3 {
-			points += 15
+	if exampleFileCount > 0 {
+		if exampleFileCount >= 3 {
+			points += 10
 		} else {
-			points += exampleCount * 5
+			points += exampleFileCount * 4
 		}
-		found = append(found, fmt.Sprintf("%d example_test.go files", exampleCount))
+		found = append(found, fmt.Sprintf("%d example_test.go files", exampleFileCount))
+	}
+
+	// Example* test functions in any _test.go file (5 pts)
+	exampleFuncCount := 0
+	for _, af := range analyzed {
+		if !strings.HasSuffix(af.Path, "_test.go") {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if strings.HasPrefix(fn.Name, "Example") {
+				exampleFuncCount++
+			}
+		}
+	}
+	if exampleFuncCount > 0 {
+		if exampleFuncCount >= 5 {
+			points += 5
+		} else {
+			points += exampleFuncCount
+		}
+		found = append(found, fmt.Sprintf("%d Example* functions", exampleFuncCount))
 	}
 
 	// CLAUDE.md pattern references: 'see `path`' (10 pts)

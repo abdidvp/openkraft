@@ -32,7 +32,7 @@ func TestBuildProfile_SingleOverrideMerges(t *testing.T) {
 	maxFunc := 80
 	cfg := domain.ProjectConfig{
 		ProjectType: domain.ProjectTypeAPI,
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			MaxFunctionLines: &maxFunc,
 		},
 	}
@@ -50,7 +50,7 @@ func TestBuildProfile_MultipleOverrides(t *testing.T) {
 	maxFile := 500
 	ratio := 0.9
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			MaxFunctionLines: &maxFunc,
 			MaxFileLines:     &maxFile,
 			MinTestRatio:     &ratio,
@@ -67,7 +67,7 @@ func TestBuildProfile_MultipleOverrides(t *testing.T) {
 
 func TestBuildProfile_LayersOverrideReplaces(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			ExpectedLayers: []string{"domain", "infra"},
 		},
 	}
@@ -78,7 +78,7 @@ func TestBuildProfile_LayersOverrideReplaces(t *testing.T) {
 
 func TestBuildProfile_ContextFilesOverrideReplaces(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			ContextFiles: []domain.ContextFileSpec{
 				{Name: "CUSTOM.md", Points: 20, MinSize: 100},
 			},
@@ -93,7 +93,7 @@ func TestBuildProfile_ContextFilesOverrideReplaces(t *testing.T) {
 
 func TestBuildProfile_LayerAliasesOverride(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			LayerAliases: map[string]string{"gateway": "adapters"},
 		},
 	}
@@ -109,7 +109,7 @@ func TestBuildProfile_TypePlusOverride(t *testing.T) {
 	maxParams := 6
 	cfg := domain.ProjectConfig{
 		ProjectType: domain.ProjectTypeLibrary,
-		Profile: domain.ProfileOverrides{
+		Profile: &domain.ProfileOverrides{
 			MaxParameters: &maxParams,
 		},
 	}

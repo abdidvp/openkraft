@@ -118,20 +118,29 @@ func scoreBuildReproducibility(scan *domain.ScanResult) domain.SubMetric {
 		}
 	}
 
-	// Makefile/Taskfile (8 pts)
+	// Makefile/Taskfile/justfile (7 pts)
 	for _, f := range scan.AllFiles {
 		lower := strings.ToLower(f)
-		if lower == "makefile" || lower == "taskfile.yml" || lower == "taskfile.yaml" {
-			points += 8
+		if lower == "makefile" || lower == "taskfile.yml" || lower == "taskfile.yaml" || lower == "justfile" {
+			points += 7
 			found = append(found, f)
 			break
 		}
 	}
 
-	// CI config (7 pts)
+	// CI config (5 pts)
 	if scan.HasCIConfig {
-		points += 7
+		points += 5
 		found = append(found, "CI config")
+	}
+
+	// Linter config (3 pts) — complements type_safety_signals
+	for _, f := range scan.AllFiles {
+		if f == ".golangci.yml" || f == ".golangci.yaml" {
+			points += 3
+			found = append(found, f)
+			break
+		}
 	}
 
 	if points > sm.Points {
