@@ -188,6 +188,88 @@ func TestValidate_PartialWeightsValid(t *testing.T) {
 	assert.NoError(t, cfg.Validate())
 }
 
+// --- Profile validation tests ---
+
+func TestValidate_ProfileNamingConventionValid(t *testing.T) {
+	for _, nc := range []string{"", "auto", "bare", "suffixed"} {
+		cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{NamingConvention: nc}}
+		assert.NoError(t, cfg.Validate(), "naming_convention %q should be valid", nc)
+	}
+}
+
+func TestValidate_ProfileNamingConventionInvalid(t *testing.T) {
+	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{NamingConvention: "camelCase"}}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown naming_convention")
+}
+
+func TestValidate_ProfileNegativeThreshold(t *testing.T) {
+	neg := -1
+	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MaxFunctionLines: &neg}}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "max_function_lines")
+	assert.Contains(t, err.Error(), "> 0")
+}
+
+func TestValidate_ProfileZeroThreshold(t *testing.T) {
+	zero := 0
+	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MaxParameters: &zero}}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parameters")
+}
+
+func TestValidate_ProfileTestRatioOutOfRange(t *testing.T) {
+	ratio := 1.5
+	cfg := domain.ProjectConfig{Profile: domain.ProfileOverrides{MinTestRatio: &ratio}}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "min_test_ratio")
+}
+
+func TestValidate_ProfileContextFileEmptyName(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		Profile: domain.ProfileOverrides{
+			ContextFiles: []domain.ContextFileSpec{{Name: "", Points: 10}},
+		},
+	}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "name must not be empty")
+}
+
+func TestValidate_ProfileContextFileZeroPoints(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		Profile: domain.ProfileOverrides{
+			ContextFiles: []domain.ContextFileSpec{{Name: "CLAUDE.md", Points: 0}},
+		},
+	}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "points must be > 0")
+}
+
+func TestValidate_ProfileValidOverrides(t *testing.T) {
+	maxFunc := 80
+	maxFile := 500
+	ratio := 0.7
+	cfg := domain.ProjectConfig{
+		Profile: domain.ProfileOverrides{
+			ExpectedLayers:   []string{"domain", "infra"},
+			NamingConvention: "bare",
+			MaxFunctionLines: &maxFunc,
+			MaxFileLines:     &maxFile,
+			MinTestRatio:     &ratio,
+			ContextFiles: []domain.ContextFileSpec{
+				{Name: "CLAUDE.md", Points: 15, MinSize: 500},
+			},
+		},
+	}
+	assert.NoError(t, cfg.Validate())
+}
+
 func TestDefaultConfigForType_WeightsSum(t *testing.T) {
 	for _, pt := range []domain.ProjectType{
 		domain.ProjectTypeAPI,

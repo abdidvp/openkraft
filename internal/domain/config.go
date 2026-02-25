@@ -55,6 +55,25 @@ type ProjectConfig struct {
 	Skip          SkipConfig         `yaml:"skip"            json:"skip,omitempty"`
 	ExcludePaths  []string           `yaml:"exclude_paths"   json:"exclude_paths,omitempty"`
 	MinThresholds map[string]int     `yaml:"min_thresholds"  json:"min_thresholds,omitempty"`
+	Profile       ProfileOverrides   `yaml:"profile"         json:"profile,omitempty"`
+}
+
+// ProfileOverrides allows users to override specific scoring profile parameters.
+// Pointer types distinguish "not specified" from zero values.
+type ProfileOverrides struct {
+	ExpectedLayers       []string          `yaml:"expected_layers,omitempty"        json:"expected_layers,omitempty"`
+	ExpectedDirs         []string          `yaml:"expected_dirs,omitempty"          json:"expected_dirs,omitempty"`
+	LayerAliases         map[string]string `yaml:"layer_aliases,omitempty"          json:"layer_aliases,omitempty"`
+	ExpectedFileSuffixes []string          `yaml:"expected_file_suffixes,omitempty" json:"expected_file_suffixes,omitempty"`
+	NamingConvention     string            `yaml:"naming_convention,omitempty"      json:"naming_convention,omitempty"`
+	MaxFunctionLines     *int              `yaml:"max_function_lines,omitempty"     json:"max_function_lines,omitempty"`
+	MaxFileLines         *int              `yaml:"max_file_lines,omitempty"         json:"max_file_lines,omitempty"`
+	MaxNestingDepth      *int              `yaml:"max_nesting_depth,omitempty"      json:"max_nesting_depth,omitempty"`
+	MaxParameters        *int              `yaml:"max_parameters,omitempty"         json:"max_parameters,omitempty"`
+	MaxConditionalOps    *int              `yaml:"max_conditional_ops,omitempty"    json:"max_conditional_ops,omitempty"`
+	ContextFiles         []ContextFileSpec `yaml:"context_files,omitempty"          json:"context_files,omitempty"`
+	MinTestRatio         *float64          `yaml:"min_test_ratio,omitempty"         json:"min_test_ratio,omitempty"`
+	MaxGlobalVarPenalty  *int              `yaml:"max_global_var_penalty,omitempty" json:"max_global_var_penalty,omitempty"`
 }
 
 // SkipConfig specifies categories and sub-metrics to exclude from scoring.
@@ -183,6 +202,64 @@ func (c ProjectConfig) Validate() error {
 		}
 		if v < 0 || v > 100 {
 			return fmt.Errorf("min_thresholds[%q] = %d (must be between 0 and 100)", k, v)
+		}
+	}
+
+	// 8. profile validation
+	if err := c.Profile.validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validNamingConventions lists allowed values for NamingConvention.
+var validNamingConventions = []string{"", "auto", "bare", "suffixed"}
+
+func (p ProfileOverrides) validate() error {
+	// naming_convention must be known
+	if p.NamingConvention != "" {
+		valid := false
+		for _, v := range validNamingConventions {
+			if p.NamingConvention == v {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("unknown naming_convention %q in profile (valid: auto, bare, suffixed)", p.NamingConvention)
+		}
+	}
+
+	// int pointer fields must be > 0 if set
+	intFields := map[string]*int{
+		"max_function_lines":   p.MaxFunctionLines,
+		"max_file_lines":       p.MaxFileLines,
+		"max_nesting_depth":    p.MaxNestingDepth,
+		"max_parameters":       p.MaxParameters,
+		"max_conditional_ops":  p.MaxConditionalOps,
+		"max_global_var_penalty": p.MaxGlobalVarPenalty,
+	}
+	for name, ptr := range intFields {
+		if ptr != nil && *ptr <= 0 {
+			return fmt.Errorf("profile.%s must be > 0 (got %d)", name, *ptr)
+		}
+	}
+
+	// min_test_ratio must be in [0.0, 1.0]
+	if p.MinTestRatio != nil {
+		if *p.MinTestRatio < 0.0 || *p.MinTestRatio > 1.0 {
+			return fmt.Errorf("profile.min_test_ratio must be between 0.0 and 1.0 (got %.2f)", *p.MinTestRatio)
+		}
+	}
+
+	// context_files validation
+	for i, cf := range p.ContextFiles {
+		if cf.Name == "" {
+			return fmt.Errorf("profile.context_files[%d].name must not be empty", i)
+		}
+		if cf.Points <= 0 {
+			return fmt.Errorf("profile.context_files[%d].points must be > 0 (got %d)", i, cf.Points)
 		}
 	}
 
