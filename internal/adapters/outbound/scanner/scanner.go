@@ -16,6 +16,8 @@ var skipDirs = map[string]bool{
 	"dist":         true,
 	"bin":          true,
 	"testdata":     true,
+	"examples":     true,
+	"example":      true,
 }
 
 // FileScanner implements domain.ProjectScanner by walking the filesystem.
