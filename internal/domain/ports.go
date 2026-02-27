@@ -120,19 +120,23 @@ type AnalyzedFile struct {
 	TypeAssertions []TypeAssert `json:"type_assertions,omitempty"`
 	TotalLines     int          `json:"total_lines,omitempty"`
 	IsGenerated    bool         `json:"is_generated,omitempty"`
+	HasCGoImport   bool         `json:"has_cgo_import,omitempty"`
 }
 
 // Function represents a function or method extracted from source.
 type Function struct {
-	Name       string   `json:"name"`
-	Receiver   string   `json:"receiver,omitempty"`
-	Exported   bool     `json:"exported"`
-	LineStart  int      `json:"line_start"`
-	LineEnd    int      `json:"line_end"`
-	Params     []Param  `json:"params,omitempty"`
-	Returns    []string `json:"returns,omitempty"`
-	MaxNesting int      `json:"max_nesting"`
-	MaxCondOps int      `json:"max_cond_ops"`
+	Name               string   `json:"name"`
+	Receiver           string   `json:"receiver,omitempty"`
+	Exported           bool     `json:"exported"`
+	LineStart          int      `json:"line_start"`
+	LineEnd            int      `json:"line_end"`
+	Params             []Param  `json:"params,omitempty"`
+	Returns            []string `json:"returns,omitempty"`
+	MaxNesting         int      `json:"max_nesting"`
+	MaxCondOps         int      `json:"max_cond_ops"`
+	StringLiteralRatio float64  `json:"string_literal_ratio,omitempty"`
+	MaxCaseArms        int      `json:"max_case_arms,omitempty"`
+	AvgCaseLines       float64  `json:"avg_case_lines,omitempty"`
 }
 
 // Param represents a function parameter.

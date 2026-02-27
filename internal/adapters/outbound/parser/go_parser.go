@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	goparser "go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
 
 	"github.com/openkraft/openkraft/internal/domain"
@@ -33,13 +34,16 @@ func (p *GoParser) AnalyzeFile(filePath string) (*domain.AnalyzedFile, error) {
 		result.TotalLines = f.LineCount()
 	}
 
-	// Detect generated code: check first comment group for "Code generated" + "DO NOT EDIT".
-	result.IsGenerated = isGeneratedFile(file)
+	// Detect generated code via comment markers or filename conventions.
+	result.IsGenerated = isGeneratedFile(file) || isGeneratedFilename(filePath)
 
 	// Imports.
 	for _, imp := range file.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
 		result.Imports = append(result.Imports, path)
+		if path == "C" {
+			result.HasCGoImport = true
+		}
 	}
 
 	// Walk top-level declarations.
@@ -139,6 +143,9 @@ func (p *GoParser) processFunc(decl *ast.FuncDecl, fset *token.FileSet) domain.F
 	if decl.Body != nil {
 		f.MaxNesting = maxNestingDepth(decl.Body, 0)
 		f.MaxCondOps = maxConditionalOps(decl.Body)
+		lines := f.LineEnd - f.LineStart + 1
+		f.StringLiteralRatio = stringLiteralRatio(fset, decl.Body, lines)
+		f.MaxCaseArms, f.AvgCaseLines = switchDispatchMetrics(fset, decl.Body)
 	}
 
 	return f
@@ -345,18 +352,108 @@ func extractTypeAssertions(file *ast.File) []domain.TypeAssert {
 
 // --- Generated code detection ---
 
-// isGeneratedFile checks whether the file begins with a "Code generated ... DO NOT EDIT"
-// comment, following the Go convention established by go generate.
+// isGeneratedFile checks whether any comment group contains a "Code generated ... DO NOT EDIT"
+// marker, following the Go convention established by go generate.
+// Checks all comment groups, not just the first, to handle files where
+// a copyright header precedes the generated-code marker.
 func isGeneratedFile(file *ast.File) bool {
-	if len(file.Comments) == 0 {
-		return false
-	}
-	for _, c := range file.Comments[0].List {
-		if strings.Contains(c.Text, "Code generated") && strings.Contains(c.Text, "DO NOT EDIT") {
-			return true
+	for _, cg := range file.Comments {
+		for _, c := range cg.List {
+			if strings.Contains(c.Text, "Code generated") && strings.Contains(c.Text, "DO NOT EDIT") {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// isGeneratedFilename detects generated files by filename convention.
+// Matches *_gen.go and *.pb.go but NOT *_gen_test.go (hand-written tests).
+func isGeneratedFilename(path string) bool {
+	base := filepath.Base(path)
+	if strings.HasSuffix(base, "_test.go") {
+		return false
+	}
+	return strings.HasSuffix(base, "_gen.go") || strings.HasSuffix(base, ".pb.go")
+}
+
+// --- String literal ratio ---
+
+// stringLiteralRatio computes the fraction of function body lines occupied
+// by string literal tokens. Functions dominated by string literals (>80%)
+// are typically template holders (e.g., shell completion scripts) rather
+// than logic, and deserve relaxed size thresholds.
+func stringLiteralRatio(fset *token.FileSet, body *ast.BlockStmt, totalLines int) float64 {
+	if body == nil || totalLines <= 0 {
+		return 0
+	}
+	var literalLines int
+	ast.Inspect(body, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if ok && lit.Kind == token.STRING {
+			start := fset.Position(lit.Pos()).Line
+			end := fset.Position(lit.End()).Line
+			literalLines += end - start + 1
+		}
+		return true
+	})
+	ratio := float64(literalLines) / float64(totalLines)
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+	return ratio
+}
+
+// --- Switch dispatch detection ---
+
+// switchDispatchMetrics finds the switch statement with the most case arms
+// in a function body and returns (maxCaseArms, avgLinesPerCase).
+// Used to detect type-switch dispatch functions (e.g., zap's Any(), ollama's String())
+// that have zero cognitive complexity but many structurally-identical case arms.
+func switchDispatchMetrics(fset *token.FileSet, body *ast.BlockStmt) (int, float64) {
+	var maxArms int
+	var avgLines float64
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		var clauses []ast.Stmt
+		switch s := n.(type) {
+		case *ast.SwitchStmt:
+			if s.Body != nil {
+				clauses = s.Body.List
+			}
+		case *ast.TypeSwitchStmt:
+			if s.Body != nil {
+				clauses = s.Body.List
+			}
+		default:
+			return true
+		}
+
+		arms := len(clauses)
+		if arms <= maxArms {
+			return true
+		}
+
+		// Compute average lines per case clause.
+		var totalLines int
+		for _, clause := range clauses {
+			cc, ok := clause.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			start := fset.Position(cc.Pos()).Line
+			end := fset.Position(cc.End()).Line
+			totalLines += end - start + 1
+		}
+
+		maxArms = arms
+		if arms > 0 {
+			avgLines = float64(totalLines) / float64(arms)
+		}
+		return true
+	})
+
+	return maxArms, avgLines
 }
 
 // --- Helpers ---

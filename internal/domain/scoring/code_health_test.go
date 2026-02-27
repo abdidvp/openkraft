@@ -186,15 +186,14 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScoreCodeHealth_RoundingBehavior(t *testing.T) {
-	// Default profile: MaxFunctionLines=50, so full credit ≤50, partial 51-100, zero >100.
-	// With 40 functions: 39 within limit (39.0) + 1 partial (0.5) = 39.5/40 = 0.9875.
-	// int(0.9875 * 20) = int(19.75) = 19 (old truncation)
-	// math.Round(0.9875 * 20) = math.Round(19.75) = 20 (new rounding)
+	// Default profile: MaxFunctionLines=50, continuous decay with k=4.
+	// 39 within limit (1.0 each) + 1 at 70 lines: decay(70,50,k=4)=0.9
+	// earned = 39.0 + 0.9 = 39.9/40 = 0.9975 → round(19.95) = 20
 	fns := make([]domain.Function, 0, 40)
 	for i := range 39 {
 		fns = append(fns, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
 	}
-	fns = append(fns, makeFunction("SlightlyLong", 70, 2, 1, 0)) // partial credit
+	fns = append(fns, makeFunction("SlightlyLong", 70, 2, 1, 0)) // decay credit 0.8
 
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("service.go", 200, fns...),
@@ -202,18 +201,18 @@ func TestScoreCodeHealth_RoundingBehavior(t *testing.T) {
 
 	sm := subMetricByName(result, "function_size")
 	require.NotNil(t, sm)
-	// 39.5/40 = 98.75% → math.Round(19.75) = 20
-	assert.Equal(t, 20, sm.Score, "98.75%% ratio should round UP to full credit, not truncate to 19")
+	assert.Equal(t, 20, sm.Score, "99.5%% ratio should round UP to full credit")
 }
 
 func TestScoreCodeHealth_RoundingDoesNotOveraward(t *testing.T) {
-	// 18 good + 2 partial = 19.0/20 = 0.95 → math.Round(19.0) = 19 (NOT 20)
+	// 18 good(30 lines) + 2 at 250 lines. decay(250,50,k=4) = 0.0
+	// earned = 18.0/20 = 0.9 → round(18.0) = 18
 	fns := make([]domain.Function, 0, 20)
 	for i := range 18 {
 		fns = append(fns, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
 	}
-	fns = append(fns, makeFunction("PartialA", 70, 2, 1, 0))
-	fns = append(fns, makeFunction("PartialB", 70, 2, 1, 0))
+	fns = append(fns, makeFunction("PartialA", 250, 2, 1, 0))
+	fns = append(fns, makeFunction("PartialB", 250, 2, 1, 0))
 
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("service.go", 200, fns...),
@@ -221,17 +220,17 @@ func TestScoreCodeHealth_RoundingDoesNotOveraward(t *testing.T) {
 
 	sm := subMetricByName(result, "function_size")
 	require.NotNil(t, sm)
-	assert.Equal(t, 19, sm.Score, "95%% ratio should yield 19, not round up to 20")
+	assert.Equal(t, 18, sm.Score, "90%% ratio should yield 18")
 }
 
 func TestScoreCodeHealth_RoundingLowerBoundary(t *testing.T) {
-	// 9 full + 1 zero out of 10 = 9.0/10 = 0.90
-	// math.Round(0.90 * 20) = math.Round(18.0) = 18
+	// 9 full + 1 at 250 lines. decay(250,50,k=4) = 0.0
+	// earned = 9.0/10 = 0.9 → round(18.0) = 18
 	fns := make([]domain.Function, 0, 10)
 	for i := range 9 {
 		fns = append(fns, makeFunction("Good"+string(rune('A'+i)), 30, 2, 1, 0))
 	}
-	fns = append(fns, makeFunction("Bad", 200, 2, 1, 0)) // zero credit
+	fns = append(fns, makeFunction("Bad", 250, 2, 1, 0)) // decay credit 0.0 (5x threshold)
 
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("service.go", 200, fns...),
@@ -239,7 +238,7 @@ func TestScoreCodeHealth_RoundingLowerBoundary(t *testing.T) {
 
 	sm := subMetricByName(result, "function_size")
 	require.NotNil(t, sm)
-	assert.Equal(t, 18, sm.Score, "90%% ratio should yield 18, not 19")
+	assert.Equal(t, 18, sm.Score, "90%% ratio should yield 18")
 }
 
 // ---------------------------------------------------------------------------
@@ -276,14 +275,14 @@ func TestScoreCodeHealth_AllIssuesHaveSubMetric(t *testing.T) {
 func TestScoreCodeHealth_SubMetricMatchesIssueType(t *testing.T) {
 	// Default profile thresholds: MaxFunctionLines=50, MaxNestingDepth=3,
 	// MaxParameters=4, MaxFileLines=300.
-	// Issue thresholds: funcSize>100, nesting≥5, params≥7, fileSize>500.
+	// Issue thresholds aligned with scoring: funcSize>50, nesting>3, params>4, fileSize>300.
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("violations.go", 600,
-			// 150 lines → triggers function_size issue (>100)
+			// 150 lines → triggers function_size issue (>50)
 			makeFunction("BigFunc", 150, 2, 1, 0),
-			// nesting 6 → triggers nesting_depth issue (≥5)
+			// nesting 6 → triggers nesting_depth issue (>3)
 			makeFunction("DeepFunc", 20, 2, 6, 0),
-			// 8 params → triggers parameter_count issue (≥7)
+			// 8 params → triggers parameter_count issue (>4)
 			makeFunction("ManyParams", 20, 8, 1, 0),
 		),
 	))
@@ -300,8 +299,8 @@ func TestScoreCodeHealth_SubMetricMatchesIssueType(t *testing.T) {
 }
 
 func TestScoreCodeHealth_ComplexConditionalsIssueGeneration(t *testing.T) {
-	// Default: MaxConditionalOps=2, issue threshold = 2+2 = 4.
-	// condOps=5 should trigger an issue.
+	// Default: MaxConditionalOps=2, issue threshold = 2 (aligned with scoring).
+	// condOps=5 should trigger an issue (5 > 2).
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("complex.go", 100,
 			makeFunction("TooComplex", 30, 2, 1, 5),
@@ -319,7 +318,7 @@ func TestScoreCodeHealth_ComplexConditionalsIssueGeneration(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScoreCodeHealth_SeverityTiering(t *testing.T) {
-	// Default: MaxParameters=4, issue threshold = 4+3 = 7.
+	// Default: MaxParameters=4, issue threshold = 4 (aligned with scoring).
 	// issueSeverity(actual, threshold):
 	//   actual/threshold >= 3.0 → error
 	//   actual/threshold >= 1.5 → warning
@@ -330,16 +329,16 @@ func TestScoreCodeHealth_SeverityTiering(t *testing.T) {
 		wantSev  string
 		ratioDesc string
 	}{
-		// 69 params / 7 threshold = 9.86x → error
-		{"extreme violation (9.9x)", 69, domain.SeverityError, "9.9x"},
-		// 21 params / 7 threshold = 3.0x → error
-		{"3x threshold boundary", 21, domain.SeverityError, "3.0x"},
-		// 14 params / 7 threshold = 2.0x → warning
-		{"2x threshold", 14, domain.SeverityWarning, "2.0x"},
-		// 11 params / 7 threshold = 1.57x → warning
-		{"1.5x threshold", 11, domain.SeverityWarning, "1.57x"},
-		// 8 params / 7 threshold = 1.14x → info
-		{"just over threshold", 8, domain.SeverityInfo, "1.14x"},
+		// 69 params / 4 threshold = 17.25x → error
+		{"extreme violation (17x)", 69, domain.SeverityError, "17.25x"},
+		// 12 params / 4 threshold = 3.0x → error
+		{"3x threshold boundary", 12, domain.SeverityError, "3.0x"},
+		// 8 params / 4 threshold = 2.0x → warning
+		{"2x threshold", 8, domain.SeverityWarning, "2.0x"},
+		// 6 params / 4 threshold = 1.5x → warning
+		{"1.5x threshold", 6, domain.SeverityWarning, "1.5x"},
+		// 5 params / 4 threshold = 1.25x → info
+		{"just over threshold", 5, domain.SeverityInfo, "1.25x"},
 	}
 
 	for _, tt := range tests {
@@ -359,18 +358,18 @@ func TestScoreCodeHealth_SeverityTiering(t *testing.T) {
 }
 
 func TestScoreCodeHealth_SeverityTieringFileSize(t *testing.T) {
-	// Default: MaxFileLines=300, issue threshold = 500 (300*5/3).
-	// 1500 / 500 = 3.0x → error
-	// 800 / 500 = 1.6x → warning
-	// 510 / 500 = 1.02x → info
+	// Default: MaxFileLines=300, issue threshold = 300 (aligned with scoring).
+	// 900 / 300 = 3.0x → error
+	// 500 / 300 = 1.67x → warning
+	// 310 / 300 = 1.03x → info
 	tests := []struct {
 		name       string
 		totalLines int
 		wantSev    string
 	}{
-		{"3x file size → error", 1500, domain.SeverityError},
-		{"1.6x file size → warning", 800, domain.SeverityWarning},
-		{"just over threshold → info", 510, domain.SeverityInfo},
+		{"3x file size → error", 900, domain.SeverityError},
+		{"1.67x file size → warning", 500, domain.SeverityWarning},
+		{"just over threshold → info", 310, domain.SeverityInfo},
 	}
 
 	for _, tt := range tests {
@@ -392,10 +391,10 @@ func TestScoreCodeHealth_SeverityTieringFileSize(t *testing.T) {
 func TestScoreCodeHealth_SeverityMixInSameResult(t *testing.T) {
 	// One file with multiple violations at different severity levels.
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("mixed.go", 1500, // file_size: 1500/500 = 3x → error
-			makeFunction("Extreme", 20, 69, 1, 0), // params: 69/7 = 9.9x → error
-			makeFunction("Moderate", 20, 11, 1, 0), // params: 11/7 = 1.57x → warning
-			makeFunction("Slight", 20, 8, 1, 0),    // params: 8/7 = 1.14x → info
+		makeFile("mixed.go", 900, // file_size: 900/300 = 3x → error
+			makeFunction("Extreme", 20, 69, 1, 0), // params: 69/4 = 17.25x → error
+			makeFunction("Moderate", 20, 8, 1, 0),  // params: 8/4 = 2.0x → warning
+			makeFunction("Slight", 20, 5, 1, 0),    // params: 5/4 = 1.25x → info
 		),
 	))
 
@@ -425,8 +424,9 @@ func TestScoreCodeHealth_ReconstructGetFullCreditOnParameterCount(t *testing.T) 
 
 	sm := subMetricByName(result, "parameter_count")
 	require.NotNil(t, sm)
-	// 1 full (Reconstruct) + 0 zero (ProcessOrder) = 1/2 = 50% → Round(10) = 10
-	assert.Equal(t, 10, sm.Score, "Reconstruct should get full credit, ProcessOrder zero")
+	// Reconstruct: 1.0 (exempt). ProcessOrder: decay(10, 4, k=4) = 1-6/16 = 0.625
+	// earned = 1.625/2 = 0.8125 → Round(16.25) = 16
+	assert.Equal(t, 16, sm.Score, "Reconstruct should get full credit, ProcessOrder partial via decay")
 }
 
 func TestScoreCodeHealth_ReconstructNoParameterCountIssue(t *testing.T) {
@@ -443,10 +443,10 @@ func TestScoreCodeHealth_ReconstructNoParameterCountIssue(t *testing.T) {
 
 func TestScoreCodeHealth_ReconstructStillCountedForOtherSubMetrics(t *testing.T) {
 	// Reconstruct is only exempt from parameter_count.
-	// If it has 200 lines, it should still get zero on function_size.
+	// If it has 300 lines, it should still get zero on function_size.
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("domain.go", 100,
-			makeFunction("ReconstructCustomer", 200, 69, 1, 0),
+			makeFunction("ReconstructCustomer", 300, 69, 1, 0),
 		),
 	))
 
@@ -455,7 +455,8 @@ func TestScoreCodeHealth_ReconstructStillCountedForOtherSubMetrics(t *testing.T)
 	require.NotNil(t, funcSM)
 	require.NotNil(t, paramSM)
 
-	assert.Equal(t, 0, funcSM.Score, "Reconstruct with 200 lines still penalized on function_size")
+	// decay(300, 50, k=4) = 0.0 (300 > 250 = 5x threshold) → score 0
+	assert.Equal(t, 0, funcSM.Score, "Reconstruct with 300 lines still penalized on function_size")
 	assert.Equal(t, 20, paramSM.Score, "Reconstruct exempt on parameter_count")
 }
 
@@ -489,8 +490,8 @@ func TestScoreCodeHealth_CustomExemptPattern(t *testing.T) {
 
 	sm := subMetricByName(result, "parameter_count")
 	require.NotNil(t, sm)
-	// HydrateUser exempt (full credit) + ProcessOrder zero = 1/2 = 50% → 10
-	assert.Equal(t, 10, sm.Score, "Hydrate pattern should exempt HydrateUser but not ProcessOrder")
+	// HydrateUser exempt (1.0) + ProcessOrder decay(10,4,k=4)=0.625 = 1.625/2 = 0.8125 → 16
+	assert.Equal(t, 16, sm.Score, "Hydrate pattern should exempt HydrateUser but not ProcessOrder")
 
 	paramIssues := issuesBySubMetric(result.Issues, "parameter_count")
 	for _, iss := range paramIssues {
@@ -546,8 +547,8 @@ func TestScoreCodeHealth_MultipleExemptPatterns(t *testing.T) {
 
 	sm := subMetricByName(result, "parameter_count")
 	require.NotNil(t, sm)
-	// 3 exempt (full) + 1 zero (ProcessPayment 10 params) = 3/4 = 75% → Round(15) = 15
-	assert.Equal(t, 15, sm.Score, "all three patterns should be exempt")
+	// 3 exempt (1.0 each) + ProcessPayment decay(10,4,k=4)=0.625 = 3.625/4 = 0.90625 → Round(18.125) = 18
+	assert.Equal(t, 18, sm.Score, "all three patterns should be exempt")
 }
 
 // ---------------------------------------------------------------------------
@@ -625,11 +626,13 @@ func TestScoreCodeHealth_TestFilesGetRelaxedThresholds(t *testing.T) {
 	}{
 		// function_size: test threshold = 100 (50*2), source threshold = 50
 		{"90-line test function gets full credit", "service_test.go", 90, "function_size", 20},
-		{"90-line source function gets partial credit", "service.go", 90, "function_size", 10},
+		// 90-line source: decay(90,50,k=4) = 1-40/200 = 0.8 → round(16) = 16
+		{"90-line source function gets decay credit", "service.go", 90, "function_size", 16},
 
 		// file_size: test threshold = 600 (300*2), source threshold = 300
 		{"500-line test file gets full credit", "handler_test.go", 0, "file_size", 20},
-		{"500-line source file gets partial credit", "handler.go", 0, "file_size", 10},
+		// 500-line source: decay(500,300,k=4) = 1-200/1200 = 0.833 → round(16.67) = 17
+		{"500-line source file gets decay credit", "handler.go", 0, "file_size", 17},
 	}
 
 	for _, tt := range tests {
@@ -666,25 +669,26 @@ func TestScoreCodeHealth_TestFileNestingRelaxed(t *testing.T) {
 	require.NotNil(t, srcSM)
 
 	assert.Equal(t, 20, testSM.Score, "nesting 4 in test file should get full credit")
-	assert.Equal(t, 10, srcSM.Score, "nesting 4 in source file should get partial credit")
+	// decay(4, 3, k=4) = 1 - 1/12 = 0.917 → round(18.33) = 18
+	assert.Equal(t, 18, srcSM.Score, "nesting 4 in source file should get decay credit")
 }
 
 func TestScoreCodeHealth_TestFileIssuesUseRelaxedThresholds(t *testing.T) {
-	// Default issue threshold for function_size: 50*2=100 (source), 50*4=200 (test).
-	// A 150-line test function should NOT trigger an issue.
-	// A 150-line source function SHOULD trigger an issue.
+	// Default issue threshold for function_size: 50 (source), 100 (test).
+	// A 90-line test function should NOT trigger an issue (90 ≤ 100).
+	// A 90-line source function SHOULD trigger an issue (90 > 50).
 	testResult := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("service_test.go", 200, makeFunction("TestBigTest", 150, 2, 1, 0)),
+		makeFile("service_test.go", 200, makeFunction("TestBigTest", 90, 2, 1, 0)),
 	))
 	srcResult := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("service.go", 200, makeFunction("BigFunc", 150, 2, 1, 0)),
+		makeFile("service.go", 200, makeFunction("BigFunc", 90, 2, 1, 0)),
 	))
 
 	testFuncIssues := issuesBySubMetric(testResult.Issues, "function_size")
 	srcFuncIssues := issuesBySubMetric(srcResult.Issues, "function_size")
 
-	assert.Empty(t, testFuncIssues, "150-line test function should NOT produce issue (threshold 200)")
-	assert.Len(t, srcFuncIssues, 1, "150-line source function SHOULD produce issue (threshold 100)")
+	assert.Empty(t, testFuncIssues, "90-line test function should NOT produce issue (threshold 100)")
+	assert.Len(t, srcFuncIssues, 1, "90-line source function SHOULD produce issue (threshold 50)")
 }
 
 // ---------------------------------------------------------------------------
@@ -757,33 +761,44 @@ func TestScoreCodeHealth_OnlyGeneratedFilesGetFullCredit(t *testing.T) {
 // Scoring tiers: full credit, partial credit, zero credit
 // ---------------------------------------------------------------------------
 
-func TestScoreCodeHealth_ScoringTiers(t *testing.T) {
+func TestScoreCodeHealth_ContinuousDecay(t *testing.T) {
 	// Default: MaxFunctionLines=50, MaxNestingDepth=3, MaxParameters=4, MaxConditionalOps=2.
+	// With k=2, zero credit at 3x threshold.
 	tests := []struct {
 		name      string
 		subMetric string
 		fn        domain.Function
-		wantTier  string // "full", "partial", "zero"
+		wantScore int
 	}{
-		// function_size tiers: ≤50=full, 51-100=partial, >100=zero
-		{"function within limit", "function_size", makeFunction("Small", 50, 2, 1, 0), "full"},
-		{"function at partial boundary", "function_size", makeFunction("Medium", 75, 2, 1, 0), "partial"},
-		{"function exceeds all limits", "function_size", makeFunction("Huge", 200, 2, 1, 0), "zero"},
+		// function_size: threshold=50, k=4, zero at 250
+		{"function within limit", "function_size", makeFunction("Small", 50, 2, 1, 0), 20},
+		// decay(75,50,k=4) = 1 - 25/200 = 0.875 → round(17.5) = 18
+		{"function slightly over", "function_size", makeFunction("Medium", 75, 2, 1, 0), 18},
+		// decay(100,50,k=4) = 1 - 50/200 = 0.75 → round(15.0) = 15
+		{"function at 2x threshold", "function_size", makeFunction("Big", 100, 2, 1, 0), 15},
+		// decay(250,50,k=4) = 0.0 → 0
+		{"function at zero boundary", "function_size", makeFunction("Extreme", 250, 2, 1, 0), 0},
 
-		// nesting tiers: ≤3=full, 4=partial, >4=zero
-		{"nesting within limit", "nesting_depth", makeFunction("Shallow", 20, 2, 3, 0), "full"},
-		{"nesting at partial boundary", "nesting_depth", makeFunction("SemiDeep", 20, 2, 4, 0), "partial"},
-		{"nesting exceeds limit", "nesting_depth", makeFunction("Deep", 20, 2, 6, 0), "zero"},
+		// nesting_depth: threshold=3, k=4, zero at 15
+		{"nesting within limit", "nesting_depth", makeFunction("Shallow", 20, 2, 3, 0), 20},
+		// decay(4,3,k=4) = 1 - 1/12 = 0.917 → round(18.33) = 18
+		{"nesting slightly over", "nesting_depth", makeFunction("SemiDeep", 20, 2, 4, 0), 18},
+		// decay(6,3,k=4) = 1 - 3/12 = 0.75 → round(15.0) = 15
+		{"nesting well over", "nesting_depth", makeFunction("Deep", 20, 2, 6, 0), 15},
 
-		// parameter_count tiers: ≤4=full, 5-6=partial, >6=zero
-		{"params within limit", "parameter_count", makeFunction("FewParams", 20, 4, 1, 0), "full"},
-		{"params at partial boundary", "parameter_count", makeFunction("SomeParams", 20, 5, 1, 0), "partial"},
-		{"params exceeds limit", "parameter_count", makeFunction("ManyParams", 20, 8, 1, 0), "zero"},
+		// parameter_count: threshold=4, k=4, zero at 20
+		{"params within limit", "parameter_count", makeFunction("FewParams", 20, 4, 1, 0), 20},
+		// decay(5,4,k=4) = 1 - 1/16 = 0.9375 → round(18.75) = 19
+		{"params slightly over", "parameter_count", makeFunction("SomeParams", 20, 5, 1, 0), 19},
+		// decay(8,4,k=4) = 1 - 4/16 = 0.75 → round(15.0) = 15
+		{"params well over", "parameter_count", makeFunction("ManyParams", 20, 8, 1, 0), 15},
 
-		// complex_conditionals tiers: ≤2=full, 3=partial, >3=zero
-		{"conditionals within limit", "complex_conditionals", makeFunction("Simple", 20, 2, 1, 2), "full"},
-		{"conditionals at partial boundary", "complex_conditionals", makeFunction("SemiComplex", 20, 2, 1, 3), "partial"},
-		{"conditionals exceeds limit", "complex_conditionals", makeFunction("Complex", 20, 2, 1, 5), "zero"},
+		// complex_conditionals: threshold=2, k=4, zero at 10
+		{"conditionals within limit", "complex_conditionals", makeFunction("Simple", 20, 2, 1, 2), 20},
+		// decay(3,2,k=4) = 1 - 1/8 = 0.875 → round(17.5) = 18
+		{"conditionals slightly over", "complex_conditionals", makeFunction("SemiComplex", 20, 2, 1, 3), 18},
+		// decay(5,2,k=4) = 1 - 3/8 = 0.625 → round(12.5) = 13
+		{"conditionals well over", "complex_conditionals", makeFunction("Complex", 20, 2, 1, 5), 13},
 	}
 
 	for _, tt := range tests {
@@ -794,15 +809,7 @@ func TestScoreCodeHealth_ScoringTiers(t *testing.T) {
 
 			sm := subMetricByName(result, tt.subMetric)
 			require.NotNilf(t, sm, "sub-metric %s not found", tt.subMetric)
-
-			switch tt.wantTier {
-			case "full":
-				assert.Equal(t, 20, sm.Score, "%s should get full credit", tt.subMetric)
-			case "partial":
-				assert.Equal(t, 10, sm.Score, "%s should get partial credit", tt.subMetric)
-			case "zero":
-				assert.Equal(t, 0, sm.Score, "%s should get zero credit", tt.subMetric)
-			}
+			assert.Equal(t, tt.wantScore, sm.Score, "%s decay score", tt.subMetric)
 		})
 	}
 }
@@ -811,8 +818,8 @@ func TestScoreCodeHealth_ScoringTiers(t *testing.T) {
 // File-size scoring tiers
 // ---------------------------------------------------------------------------
 
-func TestScoreCodeHealth_FileSizeTiers(t *testing.T) {
-	// Default: MaxFileLines=300, partial limit=500 (300*5/3), issue threshold=500.
+func TestScoreCodeHealth_FileSizeDecay(t *testing.T) {
+	// Default: MaxFileLines=300, k=4, zero at 1500.
 	tests := []struct {
 		name       string
 		totalLines int
@@ -820,9 +827,14 @@ func TestScoreCodeHealth_FileSizeTiers(t *testing.T) {
 	}{
 		{"small file", 100, 20},
 		{"at limit", 300, 20},
-		{"partial credit zone", 400, 10},
-		{"at partial limit", 500, 10},
-		{"exceeds all limits", 800, 0},
+		// decay(400,300,k=4) = 1 - 100/1200 = 0.917 → round(18.33) = 18
+		{"slightly over", 400, 18},
+		// decay(500,300,k=4) = 1 - 200/1200 = 0.833 → round(16.67) = 17
+		{"moderately over", 500, 17},
+		// decay(800,300,k=4) = 1 - 500/1200 = 0.583 → round(11.67) = 12
+		{"well over", 800, 12},
+		// decay(1500,300,k=4) = 1 - 1200/1200 = 0.0 → 0
+		{"at zero boundary", 1500, 0},
 	}
 
 	for _, tt := range tests {
@@ -865,7 +877,8 @@ func TestScoreCodeHealth_CustomProfileThresholds(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScoreCodeHealth_MultiFileAggregation(t *testing.T) {
-	// 9 clean functions + 1 violation = 90% → math.Round(18.0) = 18
+	// 9 clean functions + 1 with 300 lines.
+	// decay(300,50,k=4) = 0.0 (>5x threshold). earned = 9.0/10 = 0.9 → round(18.0) = 18
 	files := make([]*domain.AnalyzedFile, 0, 10)
 	for i := range 9 {
 		files = append(files, makeFile(
@@ -874,12 +887,11 @@ func TestScoreCodeHealth_MultiFileAggregation(t *testing.T) {
 		))
 	}
 	files = append(files, makeFile("bad.go", 100,
-		makeFunction("Terrible", 200, 8, 6, 5), // all sub-metrics violated
+		makeFunction("Terrible", 300, 8, 6, 5), // all sub-metrics violated
 	))
 
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(files...))
 
-	// function_size: 9 full + 1 zero = 9/10 = 90% → Round(18.0) = 18
 	sm := subMetricByName(result, "function_size")
 	require.NotNil(t, sm)
 	assert.Equal(t, 18, sm.Score)
@@ -921,4 +933,649 @@ func TestScoreCodeHealth_ScoreBounds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix: Issues reported at scoring boundary (no silent zone)
+// ---------------------------------------------------------------------------
+
+func TestScoreCodeHealth_IssuesReportedAtScoringBoundary(t *testing.T) {
+	// Default: MaxFunctionLines=50. A 51-line function loses score AND generates an issue.
+	// A 50-line function gets full credit and no issue.
+	tests := []struct {
+		name       string
+		lines      int
+		wantIssues int
+	}{
+		{"at threshold (50 lines) — no issue", 50, 0},
+		{"just over threshold (51 lines) — info issue", 51, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+				makeFile("service.go", 100,
+					makeFunction("Fn", tt.lines, 2, 1, 0),
+				),
+			))
+
+			funcIssues := issuesBySubMetric(result.Issues, "function_size")
+			assert.Len(t, funcIssues, tt.wantIssues)
+			if tt.wantIssues > 0 {
+				assert.Equal(t, domain.SeverityInfo, funcIssues[0].Severity,
+					"51-line function should be info severity (just over threshold)")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix: Outlier penalty — extreme functions subtract points
+// ---------------------------------------------------------------------------
+
+func TestScoreCodeHealth_ExtremeOutliersGetZeroCredit(t *testing.T) {
+	// With k=4, functions at ≥5x threshold get exactly 0.0 credit.
+	// Default: MaxFunctionLines=50, zero at 250.
+	// 9 clean + 1 at 300 lines. decay(300,50,k=4) = 0.0
+	// earned = 9.0/10 = 0.9 → round(18.0) = 18
+	fns := make([]domain.Function, 0, 10)
+	for i := range 9 {
+		fns = append(fns, makeFunction("Good"+string(rune('A'+i)), 30, 2, 1, 0))
+	}
+	fns = append(fns, makeFunction("Extreme", 300, 2, 1, 0))
+
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("service.go", 400, fns...),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 18, sm.Score, "extreme outlier gets zero credit via decay")
+}
+
+func TestScoreCodeHealth_ExtremeFileGetZeroCredit(t *testing.T) {
+	// Default: MaxFileLines=300, k=4, zero at 1500.
+	// 2 files: 1 clean (200) + 1 at 1600. decay(1600,300,k=4) = 0.0
+	// earned = 1.0/2 = 0.5 → round(10.0) = 10
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("clean.go", 200, makeFunction("A", 20, 2, 1, 0)),
+		makeFile("huge.go", 1600, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "file_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 10, sm.Score, "extreme file gets zero credit via decay")
+}
+
+func TestScoreCodeHealth_AllExtremeOutliersGetZero(t *testing.T) {
+	// All functions beyond 5x threshold (≥250 lines) → all get 0.0 credit → score = 0.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("terrible.go", 100,
+			makeFunction("A", 300, 2, 1, 0),
+			makeFunction("B", 400, 2, 1, 0),
+			makeFunction("C", 500, 2, 1, 0),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "all extreme outliers yield zero score")
+}
+
+// ---------------------------------------------------------------------------
+// Severity-weighted penalty: hybrid model deducts points based on issue density
+// ---------------------------------------------------------------------------
+
+func TestScoreCodeHealth_SeverityPenaltyApplied(t *testing.T) {
+	// A codebase with many violations should have its score reduced by the penalty.
+	// 10 functions: 5 clean + 5 with 200 lines (=error severity: 200/50=4x > 3x).
+	// Base: function_size decay(200,50,k=2)=0.0 for 5, 1.0 for 5 → 50% → 10/20
+	// Other sub-metrics: all 10 within limits → 80/80
+	// Base = 10 + 80 = 90
+	// Issues: 5 function_size errors (200/50=4x ≥ 3x → error)
+	// severity_weight = 5*3 = 15
+	// debtRatio = 15 / 10 = 1.5
+	// penalty = round(1.5 * 120) = 180 → clamped by max(0, 90-180) = 0
+	// But that's too harsh for a test. Let's use fewer violations.
+	//
+	// Instead: 20 functions, 2 with 200 lines (error severity).
+	// Base: function_size: 18/20 = 0.9 → 18. Other 4 sub-metrics: 20 each = 80.
+	// Base = 98.
+	// Issues: 2 function_size errors.
+	// severity_weight = 2*3 = 6
+	// debtRatio = 6 / 20 = 0.3
+	// penalty = round(0.3 * 120) = 36 → max(0, 98-36) = 62
+	// Still too harsh for a simple test. Let's verify with 100 functions.
+	//
+	// 100 functions: 95 clean + 5 with 200 lines.
+	// Base: function_size: decay(200,50,k=4)=0.25 per bad fn.
+	// earned = (95 + 5*0.25)/100 = 96.25/100 = 0.9625 → round(19.25) = 19. Others: 80.
+	// Base = 99.
+	// Issues: 5 errors (200/50=4x ≥ 3x). weight = 15. debtRatio = 15/100 = 0.15.
+	// penalty = round(0.15 * 120) = round(18) = 18.
+	// Score = max(0, 99-18) = 81.
+	fns := make([]domain.Function, 0, 100)
+	for i := range 95 {
+		fns = append(fns, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
+	}
+	for i := range 5 {
+		fns = append(fns, makeFunction("Bad"+string(rune('A'+i)), 200, 2, 1, 0))
+	}
+
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("service.go", 100, fns...),
+	))
+
+	// Base sub-metric score
+	base := 0
+	for _, sm := range result.SubMetrics {
+		base += sm.Score
+	}
+	assert.Equal(t, 99, base, "base sub-metric total before penalty")
+	assert.Less(t, result.Score, base, "penalty should reduce score below base")
+	assert.Equal(t, 81, result.Score, "score after rate-based severity penalty")
+}
+
+func TestScoreCodeHealth_NoPenaltyWhenNoIssues(t *testing.T) {
+	// A perfectly clean codebase should have zero penalty.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("clean.go", 100,
+			makeFunction("Do", 20, 2, 1, 0),
+		),
+	))
+
+	base := 0
+	for _, sm := range result.SubMetrics {
+		base += sm.Score
+	}
+	assert.Equal(t, base, result.Score, "no issues = no penalty, score equals base")
+	assert.Equal(t, 100, result.Score)
+}
+
+func TestScoreCodeHealth_PenaltyNeverExceedsBase(t *testing.T) {
+	// Even with extreme violations, score should be clamped at 0.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("terrible.go", 2000,
+			makeFunction("A", 500, 20, 10, 8),
+			makeFunction("B", 400, 15, 9, 7),
+			makeFunction("C", 300, 12, 8, 6),
+		),
+	))
+
+	assert.GreaterOrEqual(t, result.Score, 0, "score must never be negative")
+}
+
+func TestScoreCodeHealth_PenaltyScalesWithSeverity(t *testing.T) {
+	// More severe issues should produce a larger penalty.
+	// Both cases have 50 functions to keep the rate-based penalty realistic.
+	// Case 1: 49 clean + 1 error (200 lines). debtRatio = 3/50 = 0.06 → penalty 7
+	fns1 := make([]domain.Function, 0, 50)
+	for i := range 49 {
+		fns1 = append(fns1, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
+	}
+	fns1 = append(fns1, makeFunction("Bad", 200, 2, 1, 0))
+	result1 := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("mild.go", 100, fns1...),
+	))
+
+	// Case 2: 45 clean + 5 errors. debtRatio = 15/50 = 0.3 → penalty 36
+	fns2 := make([]domain.Function, 0, 50)
+	for i := range 45 {
+		fns2 = append(fns2, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
+	}
+	for i := range 5 {
+		fns2 = append(fns2, makeFunction("Bad"+string(rune('A'+i)), 200, 2, 1, 0))
+	}
+	result2 := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("severe.go", 100, fns2...),
+	))
+
+	assert.Greater(t, result1.Score, result2.Score,
+		"more severe violations should produce lower score")
+}
+
+func TestScoreCodeHealth_PenaltyScaleCalibration(t *testing.T) {
+	// Verify that a 6% debt ratio produces ~7 points of penalty.
+	// 50 functions: 49 clean + 1 error (200 lines, 200/50=4x ≥ 3x → error).
+	// weight = 3. debtRatio = 3/50 = 0.06. penalty = round(0.06 * 120) = 7.
+	fns := make([]domain.Function, 0, 50)
+	for i := range 49 {
+		fns = append(fns, makeFunction("Good"+string(rune('A'+i%26)), 30, 2, 1, 0))
+	}
+	fns = append(fns, makeFunction("Bad", 200, 2, 1, 0))
+
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("service.go", 100, fns...),
+	))
+
+	base := 0
+	for _, sm := range result.SubMetrics {
+		base += sm.Score
+	}
+	penalty := base - result.Score
+	assert.Equal(t, 7, penalty, "6%% debt ratio should produce 7 points of penalty with scale=120")
+}
+
+func TestScoreCodeHealth_NoSilentZone(t *testing.T) {
+	// Every function that loses score must have a corresponding issue.
+	// Functions at 51-100 lines lose score (partial credit) and should now generate issues.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("mixed.go", 200,
+			makeFunction("Clean", 50, 2, 1, 0),    // full credit, no issue
+			makeFunction("Partial", 75, 2, 1, 0),  // partial credit, should have issue
+			makeFunction("Zero", 150, 2, 1, 0),    // zero credit, should have issue
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	// Partial (75 > 50) and Zero (150 > 50) should both generate issues.
+	assert.Len(t, funcIssues, 2, "both penalized functions should generate issues")
+
+	// Verify the clean function doesn't generate an issue.
+	for _, iss := range funcIssues {
+		assert.NotContains(t, iss.Message, "Clean",
+			"function at exactly threshold should not generate issue")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Template function scoring: string-literal-dominated functions get relaxed thresholds
+// ---------------------------------------------------------------------------
+
+func makeTemplateFunction(name string, lines int, ratio float64) domain.Function {
+	return domain.Function{
+		Name:               name,
+		Exported:           name[0] >= 'A' && name[0] <= 'Z',
+		LineStart:          1,
+		LineEnd:            lines,
+		Params:             make([]domain.Param, 0),
+		MaxNesting:         0,
+		MaxCondOps:         0,
+		StringLiteralRatio: ratio,
+	}
+}
+
+func TestScoreCodeHealth_TemplateFunctionGetsFullCredit(t *testing.T) {
+	// Default: MaxFunctionLines=50, threshold*5=250.
+	// A 200-line template function (ratio 0.9 > 0.8) should get full credit.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("completions.go", 300,
+			makeTemplateFunction("BashCompletion", 200, 0.9),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "template function within relaxed limit should get full credit")
+}
+
+func TestScoreCodeHealth_TemplateFunctionNoIssue(t *testing.T) {
+	// A 200-line template function should NOT produce a function_size issue.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("completions.go", 300,
+			makeTemplateFunction("BashCompletion", 200, 0.9),
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	assert.Empty(t, funcIssues, "template function under relaxed threshold should produce no issues")
+}
+
+func TestScoreCodeHealth_NormalFunctionStillPenalized(t *testing.T) {
+	// A 300-line normal function (ratio 0.0) should still be penalized.
+	// decay(300, 50, k=4) = 0.0 (past 5x threshold).
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler.go", 400,
+			makeFunction("BigHandler", 300, 2, 1, 0),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "normal 300-line function should get zero credit")
+}
+
+func TestScoreCodeHealth_TemplateFunctionPenalizedAtExtremeSize(t *testing.T) {
+	// Default: effectiveMax for template = 50*5 = 250, zero at 250*(4+1) = 1250.
+	// A 1300-line template function should get zero credit.
+	// decay(1300, 250, k=4) = 1 - 1050/1000 = -0.05 → clamped to 0.0.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("completions.go", 1400,
+			makeTemplateFunction("MassiveTemplate", 1300, 0.95),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "even template functions get penalized at extreme sizes")
+}
+
+func TestScoreCodeHealth_TemplateFunctionCustomThreshold(t *testing.T) {
+	// Custom profile: StringLiteralThreshold=0.5, TemplateFuncSizeMultiplier=3.
+	// A function with ratio 0.6 (> 0.5) is treated as template.
+	// effectiveMax = 50*3 = 150. A 140-line template function → full credit.
+	p := domain.DefaultProfile()
+	p.StringLiteralThreshold = 0.5
+	p.TemplateFuncSizeMultiplier = 3
+
+	result := scoring.ScoreCodeHealth(&p, nil, analyzed(
+		makeFile("config.go", 200,
+			makeTemplateFunction("EmbeddedConfig", 140, 0.6),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "custom template threshold should be respected")
+}
+
+func TestScoreCodeHealth_TemplateFunctionBelowThresholdNotRelaxed(t *testing.T) {
+	// A function with ratio 0.7 (below default 0.8 threshold) is NOT a template.
+	// 300-line function with 0.7 ratio → normal scoring → zero credit.
+	// decay(300, 50, k=4) = 1 - 250/200 = -0.25 → clamped to 0.0.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("mixed.go", 400,
+			makeTemplateFunction("MixedFunc", 300, 0.7),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "function below StringLiteralThreshold should not get relaxed scoring")
+}
+
+// ---------------------------------------------------------------------------
+// Data-heavy test detection: table-driven tests get template multiplier
+// ---------------------------------------------------------------------------
+
+func makeDataHeavyTestFunc(name string, lines int) domain.Function {
+	return domain.Function{
+		Name:       name,
+		Exported:   name[0] >= 'A' && name[0] <= 'Z',
+		LineStart:  1,
+		LineEnd:    lines,
+		Params:     make([]domain.Param, 0),
+		MaxNesting: 2,  // standard pattern: for range { t.Run { if
+		MaxCondOps: 0,  // no conditional operators
+	}
+}
+
+func TestScoreCodeHealth_DataHeavyTestGetRelaxedThreshold(t *testing.T) {
+	// Default: MaxFunctionLines=50, templateMultiplier=5 → threshold=250.
+	// A 200-line low-complexity test function should get full credit.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 300,
+			makeDataHeavyTestFunc("TestHandlerCases", 200),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "data-heavy test within relaxed limit (250) should get full credit")
+}
+
+func TestScoreCodeHealth_DataHeavyTestNoIssue(t *testing.T) {
+	// Same 200-line data-heavy test → no function_size issue.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 300,
+			makeDataHeavyTestFunc("TestHandlerCases", 200),
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	assert.Empty(t, funcIssues, "data-heavy test under relaxed threshold should produce no issues")
+}
+
+func TestScoreCodeHealth_ComplexTestNotRelaxed(t *testing.T) {
+	// A 200-line test with MaxNesting=3 is NOT data-heavy → uses normal 2x (threshold=100).
+	// decay(200, 100, k=4) = 1 - 100/400 = 0.75 → round(15) = 15
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 300,
+			makeFunction("TestComplexHandler", 200, 0, 3, 2),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 15, sm.Score, "complex test should use normal 2x threshold, not data-heavy relaxation")
+}
+
+func TestScoreCodeHealth_DataHeavyTestNesting1StillRelaxed(t *testing.T) {
+	// A test with MaxNesting=1 (simple for range + t.Run, no if) still qualifies as data-heavy.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 300,
+			domain.Function{
+				Name:       "TestSimpleTable",
+				Exported:   true,
+				LineStart:  1,
+				LineEnd:    200,
+				Params:     make([]domain.Param, 0),
+				MaxNesting: 1,
+				MaxCondOps: 0,
+			},
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "nesting=1 test should still qualify as data-heavy (threshold 250)")
+}
+
+func TestScoreCodeHealth_DataHeavyTestNesting3NotRelaxed(t *testing.T) {
+	// A test with MaxNesting=3 does NOT qualify as data-heavy → uses normal 2x (threshold=100).
+	// decay(200, 100, k=4) = 1 - 100/400 = 0.75 → round(15) = 15
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 300,
+			domain.Function{
+				Name:       "TestDeeplyNested",
+				Exported:   true,
+				LineStart:  1,
+				LineEnd:    200,
+				Params:     make([]domain.Param, 0),
+				MaxNesting: 3,
+				MaxCondOps: 0,
+			},
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 15, sm.Score, "nesting=3 test should NOT qualify as data-heavy, uses normal 2x threshold")
+}
+
+func TestScoreCodeHealth_DataHeavyTestPenalizedAtExtremeSize(t *testing.T) {
+	// Default: threshold=250, zero at 250*(4+1)=1250.
+	// A 1300-line data-heavy test → zero credit.
+	// decay(1300, 250, k=4) = 1 - 1050/1000 = -0.05 → clamped to 0.0.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 1400,
+			makeDataHeavyTestFunc("TestMassiveTable", 1300),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "even data-heavy tests get penalized at extreme sizes")
+}
+
+func TestScoreCodeHealth_DataHeavyTestIssueDowngradedSeverity(t *testing.T) {
+	// A 300-line data-heavy test → threshold=250. 300/250=1.2 < 1.5x → info severity.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler_test.go", 400,
+			makeDataHeavyTestFunc("TestLargeTable", 300),
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	require.Len(t, funcIssues, 1)
+	assert.Equal(t, domain.SeverityInfo, funcIssues[0].Severity,
+		"300/250=1.2x should be info severity, not error")
+}
+
+// ---------------------------------------------------------------------------
+// CGo/FFI binding parameter exemption: files with import "C" get relaxed param thresholds
+// ---------------------------------------------------------------------------
+
+func makeCGoFile(path string, totalLines int, fns ...domain.Function) *domain.AnalyzedFile {
+	return &domain.AnalyzedFile{
+		Path:         path,
+		TotalLines:   totalLines,
+		Functions:    fns,
+		HasCGoImport: true,
+	}
+}
+
+func TestScoreCodeHealth_CGoFileRelaxedParameterCount(t *testing.T) {
+	// Default: MaxParameters=4, CGoParamThreshold=12.
+	// A CGo file with 10 params should get full credit (10 <= 12).
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeCGoFile("gpu.go", 200,
+			makeFunction("GpuInit", 30, 10, 1, 0),
+		),
+	))
+
+	sm := subMetricByName(result, "parameter_count")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "CGo file with 10 params should get full credit (threshold 12)")
+}
+
+func TestScoreCodeHealth_CGoFileNoParameterIssue(t *testing.T) {
+	// A CGo file with 10 params should NOT produce a parameter_count issue.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeCGoFile("gpu.go", 200,
+			makeFunction("GpuInit", 30, 10, 1, 0),
+		),
+	))
+
+	paramIssues := issuesBySubMetric(result.Issues, "parameter_count")
+	assert.Empty(t, paramIssues, "CGo file with params within CGo threshold should produce no issues")
+}
+
+func TestScoreCodeHealth_CGoFileStillPenalizedBeyondThreshold(t *testing.T) {
+	// Default: CGoParamThreshold=12. A function with 15 params → penalized.
+	// 15 > 12 → issue generated at info severity (15/12=1.25 < 1.5x).
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeCGoFile("gpu.go", 200,
+			makeFunction("GpuMegaInit", 30, 15, 1, 0),
+		),
+	))
+
+	paramIssues := issuesBySubMetric(result.Issues, "parameter_count")
+	require.Len(t, paramIssues, 1)
+	assert.Equal(t, domain.SeverityInfo, paramIssues[0].Severity,
+		"15/12=1.25x should be info severity")
+}
+
+func TestScoreCodeHealth_CGoFileOtherMetricsUnaffected(t *testing.T) {
+	// CGo exemption only applies to parameter_count. A 200-line function
+	// in a CGo file should still be penalized for function_size.
+	// decay(200, 50, k=4) = 1 - 150/200 = 0.25
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeCGoFile("gpu.go", 300,
+			makeFunction("GpuBigFunc", 200, 2, 1, 0),
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	assert.NotEmpty(t, funcIssues, "CGo exemption should not affect function_size scoring")
+}
+
+func TestScoreCodeHealth_NonCGoFileNotRelaxed(t *testing.T) {
+	// A normal file with 10 params should be penalized (10 > 4 default).
+	// decay(10, 4, k=4) = 1 - 6/16 = 0.625 → round(12.5) = 13
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler.go", 200,
+			makeFunction("BigHandler", 30, 10, 1, 0),
+		),
+	))
+
+	sm := subMetricByName(result, "parameter_count")
+	require.NotNil(t, sm)
+	assert.Less(t, sm.Score, 20, "non-CGo file with 10 params should not get full credit")
+}
+
+// ---------------------------------------------------------------------------
+// Switch-dispatch detection: type-switch functions get template multiplier
+// ---------------------------------------------------------------------------
+
+func makeSwitchDispatchFunc(name string, lines, caseArms int, avgCaseLines float64) domain.Function {
+	return domain.Function{
+		Name:         name,
+		Exported:     name[0] >= 'A' && name[0] <= 'Z',
+		LineStart:    1,
+		LineEnd:      lines,
+		Params:       make([]domain.Param, 0),
+		MaxNesting:   1,
+		MaxCondOps:   0,
+		MaxCaseArms:  caseArms,
+		AvgCaseLines: avgCaseLines,
+	}
+}
+
+func TestScoreCodeHealth_SwitchDispatchGetRelaxedThreshold(t *testing.T) {
+	// Default: MaxFunctionLines=50, templateMultiplier=5 → threshold=250.
+	// A 130-line switch-dispatch function with 40 cases, avg 1.5 lines → full credit.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("field.go", 200,
+			makeSwitchDispatchFunc("Any", 130, 40, 1.5),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "switch-dispatch function within relaxed limit (250) should get full credit")
+}
+
+func TestScoreCodeHealth_SwitchDispatchNoIssue(t *testing.T) {
+	// Same 130-line switch-dispatch function → no function_size issue.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("field.go", 200,
+			makeSwitchDispatchFunc("Any", 130, 40, 1.5),
+		),
+	))
+
+	funcIssues := issuesBySubMetric(result.Issues, "function_size")
+	assert.Empty(t, funcIssues, "switch-dispatch function under relaxed threshold should produce no issues")
+}
+
+func TestScoreCodeHealth_SwitchDispatchStillPenalizedAtExtremeSize(t *testing.T) {
+	// Default: threshold=250, zero at 250*(4+1)=1250.
+	// A 1300-line switch-dispatch → zero credit.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("field.go", 1400,
+			makeSwitchDispatchFunc("MegaSwitch", 1300, 500, 2.0),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 0, sm.Score, "even switch-dispatch functions get penalized at extreme sizes")
+}
+
+func TestScoreCodeHealth_FewCasesNotRelaxed(t *testing.T) {
+	// A 130-line function with only 5 cases → NOT switch-dispatch, normal threshold (50).
+	// decay(130, 50, k=4) = 1 - 80/200 = 0.6 → round(12) = 12
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler.go", 200,
+			makeSwitchDispatchFunc("Handle", 130, 5, 1.5),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 12, sm.Score, "few cases should NOT qualify as switch-dispatch, uses normal threshold")
+}
+
+func TestScoreCodeHealth_ComplexCasesNotRelaxed(t *testing.T) {
+	// A 130-line function with 40 cases but avg 8 lines per case → NOT switch-dispatch.
+	// decay(130, 50, k=4) = 1 - 80/200 = 0.6 → round(12) = 12
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("handler.go", 200,
+			makeSwitchDispatchFunc("Process", 130, 40, 8.0),
+		),
+	))
+
+	sm := subMetricByName(result, "function_size")
+	require.NotNil(t, sm)
+	assert.Equal(t, 12, sm.Score, "complex cases should NOT qualify as switch-dispatch, uses normal threshold")
 }

@@ -18,6 +18,16 @@ type ScoringProfile struct {
 	MaxConditionalOps    int
 	ExemptParamPatterns  []string
 
+	// Template function detection: functions whose body is dominated by
+	// string literals (e.g., shell completion scripts) receive relaxed
+	// size thresholds to avoid false positives.
+	StringLiteralThreshold    float64 // ratio above which a function is "template" (default 0.8)
+	TemplateFuncSizeMultiplier int    // size limit multiplier for template functions (default 5)
+
+	// CGo/FFI: files with import "C" get a relaxed parameter threshold
+	// since wrapper functions must match C API signatures.
+	CGoParamThreshold int // max params for CGo wrapper functions (default 12)
+
 	// Context Quality
 	ContextFiles []ContextFileSpec
 
@@ -56,8 +66,11 @@ func DefaultProfile() ScoringProfile {
 		MaxFileLines:     300,
 		MaxNestingDepth:  3,
 		MaxParameters:    4,
-		MaxConditionalOps:   2,
-		ExemptParamPatterns: []string{"Reconstruct"},
+		MaxConditionalOps:          2,
+		ExemptParamPatterns:        []string{"Reconstruct"},
+		StringLiteralThreshold:     0.8,
+		TemplateFuncSizeMultiplier: 5,
+		CGoParamThreshold:         12,
 		ContextFiles: []ContextFileSpec{
 			{Name: "CLAUDE.md", Points: 10, MinSize: 500},
 			{Name: "AGENTS.md", Points: 8},
