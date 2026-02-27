@@ -1,6 +1,8 @@
 package scanner_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
@@ -93,14 +95,19 @@ func TestFileScanner_PopulatesFileMetadata(t *testing.T) {
 }
 
 func TestFileScanner_AIContextOnlyFromRoot(t *testing.T) {
-	// The perfect fixture has CLAUDE.md and .cursorrules,
-	// but when scanning the project root, those should not
-	// cause HasClaudeMD=true (they're in testdata/, not root).
+	// AI context files in subdirectories should not set the root-level flags.
+	// Use an isolated temp dir so the test doesn't depend on repo state.
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "CLAUDE.md"), []byte("# Sub"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", ".cursorrules"), []byte("rules"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644))
+
 	s := scanner.New()
-	result, err := s.Scan("../../../..")
+	result, err := s.Scan(dir)
 	require.NoError(t, err)
 
-	// The project root does NOT have CLAUDE.md or .cursorrules
-	assert.False(t, result.HasClaudeMD, "should not detect CLAUDE.md from testdata/")
-	assert.False(t, result.HasCursorRules, "should not detect .cursorrules from testdata/")
+	assert.False(t, result.HasClaudeMD, "should not detect CLAUDE.md from subdirectory")
+	assert.False(t, result.HasCursorRules, "should not detect .cursorrules from subdirectory")
 }
