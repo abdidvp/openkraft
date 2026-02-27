@@ -12,6 +12,7 @@ var skipDirs = map[string]bool{
 	"vendor":       true,
 	"node_modules": true,
 	".git":         true,
+	".worktrees":   true,
 	"dist":         true,
 	"bin":          true,
 	"testdata":     true,
@@ -48,6 +49,13 @@ func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.
 		if d.IsDir() {
 			if skipDirs[d.Name()] || extraSkip[d.Name()] {
 				return filepath.SkipDir
+			}
+			// Skip worktree directories nested under other dirs (e.g. .claude/worktrees)
+			if d.Name() == "worktrees" {
+				relDir, _ := filepath.Rel(absPath, path)
+				if strings.HasPrefix(relDir, ".claude"+string(filepath.Separator)) {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

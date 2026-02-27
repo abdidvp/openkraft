@@ -2,13 +2,24 @@ package scoring
 
 import (
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/openkraft/openkraft/internal/domain"
 )
 
+func isTestFile(path string) bool {
+	return strings.HasSuffix(path, "_test.go")
+}
+
 // ScoreCodeHealth evaluates the 5 code smells that predict AI refactoring success.
 // Weight: 0.25 (25% of overall score).
 func ScoreCodeHealth(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+	if profile == nil {
+		p := domain.DefaultProfile()
+		profile = &p
+	}
+
 	cat := domain.CategoryScore{
 		Name:   "code_health",
 		Weight: 0.25,
@@ -40,6 +51,13 @@ func scoreFunctionSize(profile *domain.ScoringProfile, analyzed map[string]*doma
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		effectiveMax := maxLines
+		if isTestFile(af.Path) {
+			effectiveMax = maxLines * 2
+		}
 		for _, fn := range af.Functions {
 			lines := fn.LineEnd - fn.LineStart + 1
 			if lines <= 0 {
@@ -47,20 +65,21 @@ func scoreFunctionSize(profile *domain.ScoringProfile, analyzed map[string]*doma
 			}
 			total++
 			switch {
-			case lines <= maxLines:
+			case lines <= effectiveMax:
 				earned += 1.0
-			case lines <= maxLines*2:
+			case lines <= effectiveMax*2:
 				earned += 0.5
 			}
 		}
 	}
 	if total == 0 {
-		sm.Detail = "no functions found"
+		sm.Score = sm.Points
+		sm.Detail = "no functions to evaluate"
 		return sm
 	}
 
 	ratio := earned / float64(total)
-	sm.Score = int(ratio * float64(sm.Points))
+	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
@@ -73,28 +92,33 @@ func scoreFunctionSize(profile *domain.ScoringProfile, analyzed map[string]*doma
 func scoreFileSize(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "file_size", Points: 20}
 	maxLines := profile.MaxFileLines
-	partialLimit := maxLines * 5 / 3
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
-		if af.TotalLines <= 0 {
+		if af.IsGenerated || af.TotalLines <= 0 {
 			continue
 		}
+		effectiveMax := maxLines
+		if isTestFile(af.Path) {
+			effectiveMax = maxLines * 2
+		}
+		partialLimit := effectiveMax * 5 / 3
 		total++
 		switch {
-		case af.TotalLines <= maxLines:
+		case af.TotalLines <= effectiveMax:
 			earned += 1.0
 		case af.TotalLines <= partialLimit:
 			earned += 0.5
 		}
 	}
 	if total == 0 {
-		sm.Detail = "no files with line counts"
+		sm.Score = sm.Points
+		sm.Detail = "no files to evaluate"
 		return sm
 	}
 
 	ratio := earned / float64(total)
-	sm.Score = int(ratio * float64(sm.Points))
+	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
@@ -110,23 +134,31 @@ func scoreNestingDepth(profile *domain.ScoringProfile, analyzed map[string]*doma
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		effectiveMax := maxDepth
+		if isTestFile(af.Path) {
+			effectiveMax = maxDepth + 1
+		}
 		for _, fn := range af.Functions {
 			total++
 			switch {
-			case fn.MaxNesting <= maxDepth:
+			case fn.MaxNesting <= effectiveMax:
 				earned += 1.0
-			case fn.MaxNesting == maxDepth+1:
+			case fn.MaxNesting == effectiveMax+1:
 				earned += 0.5
 			}
 		}
 	}
 	if total == 0 {
-		sm.Detail = "no functions found"
+		sm.Score = sm.Points
+		sm.Detail = "no functions to evaluate"
 		return sm
 	}
 
 	ratio := earned / float64(total)
-	sm.Score = int(ratio * float64(sm.Points))
+	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
@@ -142,24 +174,36 @@ func scoreParameterCount(profile *domain.ScoringProfile, analyzed map[string]*do
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		effectiveMax := maxParams
+		if isTestFile(af.Path) {
+			effectiveMax = maxParams + 2
+		}
 		for _, fn := range af.Functions {
 			total++
+			if isExemptFromParams(fn.Name, profile.ExemptParamPatterns) {
+				earned += 1.0 // exempt pattern: skip parameter limits
+				continue
+			}
 			paramCount := len(fn.Params)
 			switch {
-			case paramCount <= maxParams:
+			case paramCount <= effectiveMax:
 				earned += 1.0
-			case paramCount <= maxParams+2:
+			case paramCount <= effectiveMax+2:
 				earned += 0.5
 			}
 		}
 	}
 	if total == 0 {
-		sm.Detail = "no functions found"
+		sm.Score = sm.Points
+		sm.Detail = "no functions to evaluate"
 		return sm
 	}
 
 	ratio := earned / float64(total)
-	sm.Score = int(ratio * float64(sm.Points))
+	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
@@ -175,23 +219,31 @@ func scoreComplexConditionals(profile *domain.ScoringProfile, analyzed map[strin
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		effectiveMax := maxOps
+		if isTestFile(af.Path) {
+			effectiveMax = maxOps + 1
+		}
 		for _, fn := range af.Functions {
 			total++
 			switch {
-			case fn.MaxCondOps <= maxOps:
+			case fn.MaxCondOps <= effectiveMax:
 				earned += 1.0
-			case fn.MaxCondOps == maxOps+1:
+			case fn.MaxCondOps == effectiveMax+1:
 				earned += 0.5
 			}
 		}
 	}
 	if total == 0 {
-		sm.Detail = "no functions found"
+		sm.Score = sm.Points
+		sm.Detail = "no functions to evaluate"
 		return sm
 	}
 
 	ratio := earned / float64(total)
-	sm.Score = int(ratio * float64(sm.Points))
+	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	if sm.Score > sm.Points {
 		sm.Score = sm.Points
 	}
@@ -199,50 +251,135 @@ func scoreComplexConditionals(profile *domain.ScoringProfile, analyzed map[strin
 	return sm
 }
 
+// isExemptFromParams reports whether the function name matches any of the
+// configured exempt prefixes for parameter count scoring.
+func isExemptFromParams(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// issueSeverity returns a severity level based on how far the actual value
+// exceeds the threshold. ≥3x = error, ≥1.5x = warning, else info.
+func issueSeverity(actual, threshold int) string {
+	if threshold <= 0 {
+		return domain.SeverityWarning
+	}
+	ratio := float64(actual) / float64(threshold)
+	switch {
+	case ratio >= 3.0:
+		return domain.SeverityError
+	case ratio >= 1.5:
+		return domain.SeverityWarning
+	default:
+		return domain.SeverityInfo
+	}
+}
+
+// funcPattern classifies a function name into a pattern for issue grouping.
+func funcPattern(name string) string {
+	switch {
+	case strings.HasPrefix(name, "Reconstruct"):
+		return "reconstruct"
+	case strings.HasPrefix(name, "New"):
+		return "constructor"
+	case strings.HasPrefix(name, "Test"):
+		return "test"
+	default:
+		return ""
+	}
+}
+
+// filePattern classifies a file path into a pattern for issue grouping.
+func filePattern(path string) string {
+	if strings.Contains(path, "sqlc/") || strings.HasSuffix(path, "_gen.go") {
+		return "generated"
+	}
+	return ""
+}
+
 func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
 	var issues []domain.Issue
-	funcIssueThreshold := profile.MaxFunctionLines * 2
-	nestIssueThreshold := profile.MaxNestingDepth + 2
-	paramIssueThreshold := profile.MaxParameters + 3
-	fileIssueThreshold := profile.MaxFileLines * 5 / 3
 
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		testFile := isTestFile(af.Path)
+
+		// Compute per-file thresholds (relaxed for test files).
+		funcThresh := profile.MaxFunctionLines * 2
+		nestThresh := profile.MaxNestingDepth + 2
+		paramThresh := profile.MaxParameters + 3
+		condThresh := profile.MaxConditionalOps + 2
+		fileThresh := profile.MaxFileLines * 5 / 3
+		if testFile {
+			funcThresh = profile.MaxFunctionLines * 4
+			nestThresh = profile.MaxNestingDepth + 3
+			paramThresh = profile.MaxParameters + 5
+			condThresh = profile.MaxConditionalOps + 3
+			fileThresh = profile.MaxFileLines * 10 / 3
+		}
+
 		for _, fn := range af.Functions {
+			pat := funcPattern(fn.Name)
 			lines := fn.LineEnd - fn.LineStart + 1
-			if lines > funcIssueThreshold {
+			if lines > funcThresh {
 				issues = append(issues, domain.Issue{
-					Severity: domain.SeverityWarning,
-					Category: "code_health",
-					File:     af.Path,
-					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s is %d lines (>%d)", fn.Name, lines, funcIssueThreshold),
+					Severity:  issueSeverity(lines, funcThresh),
+					Category:  "code_health",
+					SubMetric: "function_size",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("function %s is %d lines (>%d)", fn.Name, lines, funcThresh),
+					Pattern:   pat,
 				})
 			}
-			if fn.MaxNesting >= nestIssueThreshold {
+			if fn.MaxNesting >= nestThresh {
 				issues = append(issues, domain.Issue{
-					Severity: domain.SeverityWarning,
-					Category: "code_health",
-					File:     af.Path,
-					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s has nesting depth %d (≥%d)", fn.Name, fn.MaxNesting, nestIssueThreshold),
+					Severity:  issueSeverity(fn.MaxNesting, nestThresh),
+					Category:  "code_health",
+					SubMetric: "nesting_depth",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("function %s has nesting depth %d (≥%d)", fn.Name, fn.MaxNesting, nestThresh),
+					Pattern:   pat,
 				})
 			}
-			if len(fn.Params) >= paramIssueThreshold {
+			if len(fn.Params) >= paramThresh && !isExemptFromParams(fn.Name, profile.ExemptParamPatterns) {
 				issues = append(issues, domain.Issue{
-					Severity: domain.SeverityWarning,
-					Category: "code_health",
-					File:     af.Path,
-					Line:     fn.LineStart,
-					Message:  fmt.Sprintf("function %s has %d parameters (≥%d)", fn.Name, len(fn.Params), paramIssueThreshold),
+					Severity:  issueSeverity(len(fn.Params), paramThresh),
+					Category:  "code_health",
+					SubMetric: "parameter_count",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("function %s has %d parameters (≥%d)", fn.Name, len(fn.Params), paramThresh),
+					Pattern:   pat,
+				})
+			}
+			if fn.MaxCondOps >= condThresh {
+				issues = append(issues, domain.Issue{
+					Severity:  issueSeverity(fn.MaxCondOps, condThresh),
+					Category:  "code_health",
+					SubMetric: "complex_conditionals",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("function %s has %d conditional operators (≥%d)", fn.Name, fn.MaxCondOps, condThresh),
+					Pattern:   pat,
 				})
 			}
 		}
-		if af.TotalLines > fileIssueThreshold {
+		if af.TotalLines > fileThresh {
 			issues = append(issues, domain.Issue{
-				Severity: domain.SeverityWarning,
-				Category: "code_health",
-				File:     af.Path,
-				Message:  fmt.Sprintf("file has %d lines (>%d)", af.TotalLines, fileIssueThreshold),
+				Severity:  issueSeverity(af.TotalLines, fileThresh),
+				Category:  "code_health",
+				SubMetric: "file_size",
+				File:      af.Path,
+				Message:   fmt.Sprintf("file has %d lines (>%d)", af.TotalLines, fileThresh),
+				Pattern:   filePattern(af.Path),
 			})
 		}
 	}

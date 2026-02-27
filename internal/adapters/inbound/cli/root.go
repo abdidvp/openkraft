@@ -20,6 +20,9 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newCheckCmd())
 	cmd.AddCommand(newMCPCmd())
 	cmd.AddCommand(newInitCmd())
+	cmd.AddCommand(newOnboardCmd())
+	cmd.AddCommand(newFixCmd())
+	cmd.AddCommand(newValidateCmd())
 	return cmd
 }
 

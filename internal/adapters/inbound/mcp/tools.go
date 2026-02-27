@@ -11,6 +11,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	cacheAdapter "github.com/openkraft/openkraft/internal/adapters/outbound/cache"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
 	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
@@ -81,6 +82,37 @@ func registerTools(s *server.MCPServer, projectPath string) {
 			),
 		),
 		handleCheckFile(projectPath),
+	)
+
+	// 7. openkraft_onboard
+	s.AddTool(
+		mcplib.NewTool("openkraft_onboard",
+			mcplib.WithDescription("Generate a consistency contract (CLAUDE.md) from codebase analysis. Returns project conventions, golden module, dependency rules, and norms."),
+			mcplib.WithString("format", mcplib.Description("Output format: md or json (default: json)")),
+		),
+		handleOnboard(projectPath),
+	)
+
+	// 8. openkraft_fix
+	s.AddTool(
+		mcplib.NewTool("openkraft_fix",
+			mcplib.WithDescription("Detect drift from project patterns and return fix plan with safe auto-fixes and structured instructions"),
+			mcplib.WithBoolean("dry_run", mcplib.Description("Show plan without applying fixes")),
+			mcplib.WithString("category", mcplib.Description("Fix only a specific category")),
+		),
+		handleFix(projectPath),
+	)
+
+	// 9. openkraft_validate
+	s.AddTool(
+		mcplib.NewTool("openkraft_validate",
+			mcplib.WithDescription("Incremental drift detection for changed files. Returns drift issues and score impact."),
+			mcplib.WithString("changed", mcplib.Required(), mcplib.Description("Comma-separated changed file paths relative to project root")),
+			mcplib.WithString("added", mcplib.Description("Comma-separated added file paths")),
+			mcplib.WithString("deleted", mcplib.Description("Comma-separated deleted file paths")),
+			mcplib.WithBoolean("strict", mcplib.Description("Fail on warnings")),
+		),
+		handleValidate(projectPath),
 	)
 }
 
@@ -254,6 +286,103 @@ func handleCheckFile(projectPath string) server.ToolHandlerFunc {
 
 		return jsonResult(result)
 	}
+}
+
+func handleOnboard(projectPath string) server.ToolHandlerFunc {
+	return func(_ context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		sc := scanner.New()
+		det := detector.New()
+		par := parser.New()
+		cfg := config.New()
+		svc := application.NewOnboardService(sc, det, par, cfg)
+
+		report, err := svc.GenerateReport(projectPath)
+		if err != nil {
+			return errorResult(fmt.Sprintf("onboard failed: %v", err)), nil
+		}
+
+		format, _ := request.GetArguments()["format"].(string)
+		if format == "md" {
+			return textResult(svc.RenderContract(report)), nil
+		}
+		return jsonResult(report)
+	}
+}
+
+func handleFix(projectPath string) server.ToolHandlerFunc {
+	return func(_ context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		sc := scanner.New()
+		det := detector.New()
+		par := parser.New()
+		cfg := config.New()
+
+		scoreSvc := application.NewScoreService(sc, det, par, cfg)
+		onboardSvc := application.NewOnboardService(sc, det, par, cfg)
+		fixSvc := application.NewFixService(scoreSvc, onboardSvc)
+
+		dryRun, _ := request.GetArguments()["dry_run"].(bool)
+		category, _ := request.GetArguments()["category"].(string)
+
+		opts := domain.FixOptions{
+			DryRun:   dryRun,
+			AutoOnly: false,
+			Category: category,
+		}
+
+		plan, err := fixSvc.PlanFixes(projectPath, opts)
+		if err != nil {
+			return errorResult(fmt.Sprintf("fix failed: %v", err)), nil
+		}
+		return jsonResult(plan)
+	}
+}
+
+func handleValidate(projectPath string) server.ToolHandlerFunc {
+	return func(_ context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		changedStr, err := request.RequireString("changed")
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+
+		sc := scanner.New()
+		det := detector.New()
+		par := parser.New()
+		cfg := config.New()
+
+		cacheSt := cacheAdapter.New()
+		scoreSvc := application.NewScoreService(sc, det, par, cfg)
+		validateSvc := application.NewValidateService(sc, det, par, scoreSvc, cacheSt, cfg)
+
+		changed := splitAndTrim(changedStr)
+
+		var added, deleted []string
+		args := request.GetArguments()
+		if addedStr, ok := args["added"].(string); ok && addedStr != "" {
+			added = splitAndTrim(addedStr)
+		}
+		if deletedStr, ok := args["deleted"].(string); ok && deletedStr != "" {
+			deleted = splitAndTrim(deletedStr)
+		}
+		strict, _ := args["strict"].(bool)
+
+		result, err := validateSvc.Validate(projectPath, changed, added, deleted, strict)
+		if err != nil {
+			return errorResult(fmt.Sprintf("validate failed: %v", err)), nil
+		}
+		return jsonResult(result)
+	}
+}
+
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	var result []string
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 // analyzeFiles runs the code analyzer on all Go files in the scan result.

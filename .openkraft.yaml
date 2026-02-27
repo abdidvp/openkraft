@@ -1,0 +1,31 @@
+# OpenKraft configuration
+# See: https://github.com/openkraft/openkraft
+
+project_type: cli-tool
+
+weights:
+  code_health: 0.25
+  discoverability: 0.20
+  structure: 0.10
+  verifiability: 0.20
+  context_quality: 0.10
+  predictability: 0.15
+
+skip:
+  sub_metrics:
+    - interface_contracts
+    - module_completeness
+
+# profile:
+#   exempt_param_patterns:
+#     - Reconstruct
+#     - Hydrate
+#     - MapFrom
+
+# exclude_paths:
+#   - generated
+#   - third_party
+
+# min_thresholds:
+#   verifiability: 60
+#   code_health: 50

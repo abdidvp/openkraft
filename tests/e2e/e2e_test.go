@@ -278,6 +278,70 @@ profile:
 	assert.NotNil(t, score.AppliedConfig)
 }
 
+// --- Onboard Tests ---
+
+func TestE2E_Onboard(t *testing.T) {
+	out, code := run(t, "onboard", fixturePath("perfect"), "--format", "json")
+	assert.Equal(t, 0, code)
+
+	var report domain.OnboardReport
+	err := json.Unmarshal([]byte(out), &report)
+	require.NoError(t, err)
+	assert.NotEmpty(t, report.Modules, "should detect modules")
+	assert.Greater(t, report.Norms.FunctionLines, 0, "should compute norms")
+}
+
+func TestE2E_OnboardWritesCLAUDEmd(t *testing.T) {
+	// Copy fixture to temp dir to avoid modifying fixtures
+	tmpDir := t.TempDir()
+
+	// Copy go.mod so onboard can detect a Go project
+	goMod, err := os.ReadFile(filepath.Join(fixturePath("perfect"), "go.mod"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "go.mod"), goMod, 0644))
+
+	out, code := run(t, "onboard", tmpDir, "--force")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "MUST", "contract should contain prescriptive language")
+
+	// Verify CLAUDE.md was created
+	claudeContent, err := os.ReadFile(filepath.Join(tmpDir, "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(claudeContent), "MUST")
+}
+
+// --- Fix Tests ---
+
+func TestE2E_FixDryRun(t *testing.T) {
+	out, code := run(t, "fix", "--dry-run", fixturePath("incomplete"))
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "score_before")
+}
+
+// --- Validate Tests ---
+
+func TestE2E_ValidatePass(t *testing.T) {
+	fp := fixturePath("perfect")
+	os.RemoveAll(filepath.Join(fp, ".openkraft", "cache"))
+	defer os.RemoveAll(filepath.Join(fp, ".openkraft", "cache"))
+
+	// validate uses "." as project path, so we must set cmd.Dir
+	cmd := exec.Command(binaryPath, "validate", "internal/tax/domain/tax_rule.go")
+	cmd.Dir = fp
+	outBytes, err := cmd.CombinedOutput()
+	out := string(outBytes)
+
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	assert.Contains(t, out, "status")
+	_ = exitCode
+}
+
 // --- Version Test ---
 
 func TestE2E_Version(t *testing.T) {

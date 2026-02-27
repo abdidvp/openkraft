@@ -27,6 +27,9 @@ func TestMCPServerHasTools(t *testing.T) {
 		"openkraft_get_golden_example",
 		"openkraft_get_conventions",
 		"openkraft_check_file",
+		"openkraft_onboard",
+		"openkraft_fix",
+		"openkraft_validate",
 	}
 
 	for _, name := range expectedTools {

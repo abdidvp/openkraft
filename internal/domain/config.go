@@ -71,6 +71,7 @@ type ProfileOverrides struct {
 	MaxNestingDepth      *int              `yaml:"max_nesting_depth,omitempty"      json:"max_nesting_depth,omitempty"`
 	MaxParameters        *int              `yaml:"max_parameters,omitempty"         json:"max_parameters,omitempty"`
 	MaxConditionalOps    *int              `yaml:"max_conditional_ops,omitempty"    json:"max_conditional_ops,omitempty"`
+	ExemptParamPatterns  []string          `yaml:"exempt_param_patterns,omitempty"  json:"exempt_param_patterns,omitempty"`
 	ContextFiles         []ContextFileSpec `yaml:"context_files,omitempty"          json:"context_files,omitempty"`
 	MinTestRatio         *float64          `yaml:"min_test_ratio,omitempty"         json:"min_test_ratio,omitempty"`
 	MaxGlobalVarPenalty  *int              `yaml:"max_global_var_penalty,omitempty" json:"max_global_var_penalty,omitempty"`

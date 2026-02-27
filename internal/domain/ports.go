@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // ProjectScanner scans a project directory and returns file metadata.
 type ProjectScanner interface {
 	Scan(projectPath string, excludePaths ...string) (*ScanResult, error)
@@ -37,6 +39,53 @@ type ScanResult struct {
 	Layout                 ArchLayout `json:"layout"`
 }
 
+// AddFile adds a file path to the appropriate file lists.
+// Go files (.go) are added to GoFiles; test files (_test.go) also to TestFiles.
+// All files are added to AllFiles. Duplicates are avoided.
+func (s *ScanResult) AddFile(path string) {
+	if containsStr(s.AllFiles, path) {
+		return
+	}
+	s.AllFiles = append(s.AllFiles, path)
+
+	if strings.HasSuffix(path, ".go") {
+		if !containsStr(s.GoFiles, path) {
+			s.GoFiles = append(s.GoFiles, path)
+		}
+		if strings.HasSuffix(path, "_test.go") {
+			if !containsStr(s.TestFiles, path) {
+				s.TestFiles = append(s.TestFiles, path)
+			}
+		}
+	}
+}
+
+// RemoveFile removes a file path from all file lists.
+func (s *ScanResult) RemoveFile(path string) {
+	s.GoFiles = removeStr(s.GoFiles, path)
+	s.TestFiles = removeStr(s.TestFiles, path)
+	s.AllFiles = removeStr(s.AllFiles, path)
+}
+
+func containsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeStr(slice []string, s string) []string {
+	result := slice[:0]
+	for _, v := range slice {
+		if v != s {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
 // ModuleDetector detects module boundaries from scan results.
 type ModuleDetector interface {
 	Detect(scan *ScanResult) ([]DetectedModule, error)
@@ -70,6 +119,7 @@ type AnalyzedFile struct {
 	ErrorCalls     []ErrorCall  `json:"error_calls,omitempty"`
 	TypeAssertions []TypeAssert `json:"type_assertions,omitempty"`
 	TotalLines     int          `json:"total_lines,omitempty"`
+	IsGenerated    bool         `json:"is_generated,omitempty"`
 }
 
 // Function represents a function or method extracted from source.
@@ -125,6 +175,13 @@ type ScoreHistory interface {
 // ConfigLoader loads project configuration from the project directory.
 type ConfigLoader interface {
 	Load(projectPath string) (ProjectConfig, error)
+}
+
+// CacheStore persists and retrieves project analysis caches.
+type CacheStore interface {
+	Load(projectPath string) (*ProjectCache, error)
+	Save(cache *ProjectCache) error
+	Invalidate(projectPath string) error
 }
 
 // ScoreEntry represents a single historical score record.

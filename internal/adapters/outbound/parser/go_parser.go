@@ -33,6 +33,9 @@ func (p *GoParser) AnalyzeFile(filePath string) (*domain.AnalyzedFile, error) {
 		result.TotalLines = f.LineCount()
 	}
 
+	// Detect generated code: check first comment group for "Code generated" + "DO NOT EDIT".
+	result.IsGenerated = isGeneratedFile(file)
+
 	// Imports.
 	for _, imp := range file.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
@@ -338,6 +341,22 @@ func extractTypeAssertions(file *ast.File) []domain.TypeAssert {
 		return true
 	})
 	return asserts
+}
+
+// --- Generated code detection ---
+
+// isGeneratedFile checks whether the file begins with a "Code generated ... DO NOT EDIT"
+// comment, following the Go convention established by go generate.
+func isGeneratedFile(file *ast.File) bool {
+	if len(file.Comments) == 0 {
+		return false
+	}
+	for _, c := range file.Comments[0].List {
+		if strings.Contains(c.Text, "Code generated") && strings.Contains(c.Text, "DO NOT EDIT") {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Helpers ---

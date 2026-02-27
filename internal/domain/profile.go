@@ -15,7 +15,8 @@ type ScoringProfile struct {
 	MaxFileLines      int
 	MaxNestingDepth   int
 	MaxParameters     int
-	MaxConditionalOps int
+	MaxConditionalOps    int
+	ExemptParamPatterns  []string
 
 	// Context Quality
 	ContextFiles []ContextFileSpec
@@ -55,7 +56,8 @@ func DefaultProfile() ScoringProfile {
 		MaxFileLines:     300,
 		MaxNestingDepth:  3,
 		MaxParameters:    4,
-		MaxConditionalOps: 2,
+		MaxConditionalOps:   2,
+		ExemptParamPatterns: []string{"Reconstruct"},
 		ContextFiles: []ContextFileSpec{
 			{Name: "CLAUDE.md", Points: 10, MinSize: 500},
 			{Name: "AGENTS.md", Points: 8},

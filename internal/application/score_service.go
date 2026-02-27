@@ -67,7 +67,27 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 	// 4. Build scoring profile from config defaults + user overrides
 	profile := BuildProfile(cfg)
 
-	// 5. Run all 6 scorers with profile
+	// 5-7. Score with pre-loaded data
+	result := s.ScoreWithData(cfg, profile, scan, modules, analyzed)
+
+	// Attach config to output if non-default
+	var appliedCfg *domain.ProjectConfig
+	if cfg.ProjectType != "" || len(cfg.Weights) > 0 || len(cfg.Skip.Categories) > 0 || len(cfg.Skip.SubMetrics) > 0 {
+		appliedCfg = &cfg
+	}
+	result.AppliedConfig = appliedCfg
+
+	return result, nil
+}
+
+// ScoreWithData runs all 6 scorers with pre-loaded data. No disk I/O.
+func (s *ScoreService) ScoreWithData(
+	cfg domain.ProjectConfig,
+	profile domain.ScoringProfile,
+	scan *domain.ScanResult,
+	modules []domain.DetectedModule,
+	analyzed map[string]*domain.AnalyzedFile,
+) *domain.Score {
 	categories := []domain.CategoryScore{
 		scoring.ScoreCodeHealth(&profile, scan, analyzed),
 		scoring.ScoreDiscoverability(&profile, modules, scan, analyzed),
@@ -77,24 +97,14 @@ func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
 		scoring.ScorePredictability(&profile, modules, scan, analyzed),
 	}
 
-	// 6. Apply config: skip categories, filter sub-metrics, override weights
 	categories = applyConfig(categories, cfg)
-
-	// 7. Compute overall
 	overall := domain.ComputeOverallScore(categories)
 
-	// Attach config to output if non-default
-	var appliedCfg *domain.ProjectConfig
-	if cfg.ProjectType != "" || len(cfg.Weights) > 0 || len(cfg.Skip.Categories) > 0 || len(cfg.Skip.SubMetrics) > 0 {
-		appliedCfg = &cfg
-	}
-
 	return &domain.Score{
-		Overall:       overall,
-		Categories:    categories,
-		Timestamp:     time.Now(),
-		AppliedConfig: appliedCfg,
-	}, nil
+		Overall:    overall,
+		Categories: categories,
+		Timestamp:  time.Now(),
+	}
 }
 
 // BuildProfile constructs a ScoringProfile from config defaults and user overrides.
@@ -134,6 +144,9 @@ func BuildProfile(cfg domain.ProjectConfig) domain.ScoringProfile {
 	}
 	if p.MaxConditionalOps != nil {
 		base.MaxConditionalOps = *p.MaxConditionalOps
+	}
+	if len(p.ExemptParamPatterns) > 0 {
+		base.ExemptParamPatterns = p.ExemptParamPatterns
 	}
 	if len(p.ContextFiles) > 0 {
 		base.ContextFiles = p.ContextFiles
