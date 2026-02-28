@@ -89,8 +89,8 @@ func TestScoreCodeHealth_CategoryStructure(t *testing.T) {
 	}
 
 	expectedSubMetrics := []string{
-		"function_size", "file_size", "nesting_depth",
-		"parameter_count", "complex_conditionals",
+		"function_size", "file_size", "cognitive_complexity",
+		"parameter_count", "code_duplication",
 	}
 
 	for _, tt := range tests {
@@ -131,11 +131,11 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			analyzed:    map[string]*domain.AnalyzedFile{},
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":        "no functions to evaluate",
-				"file_size":            "no files to evaluate",
-				"nesting_depth":        "no functions to evaluate",
-				"parameter_count":      "no functions to evaluate",
-				"complex_conditionals": "no functions to evaluate",
+				"function_size":          "no functions to evaluate",
+				"file_size":              "no files to evaluate",
+				"cognitive_complexity":   "no functions to evaluate",
+				"parameter_count":        "no functions to evaluate",
+				"code_duplication":       "no duplication detected",
 			},
 		},
 		{
@@ -143,11 +143,11 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			analyzed:    nil,
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":        "no functions to evaluate",
-				"file_size":            "no files to evaluate",
-				"nesting_depth":        "no functions to evaluate",
-				"parameter_count":      "no functions to evaluate",
-				"complex_conditionals": "no functions to evaluate",
+				"function_size":          "no functions to evaluate",
+				"file_size":              "no files to evaluate",
+				"cognitive_complexity":   "no functions to evaluate",
+				"parameter_count":        "no functions to evaluate",
+				"code_duplication":       "no duplication detected",
 			},
 		},
 		{
@@ -157,10 +157,10 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			),
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":        "no functions to evaluate",
-				"nesting_depth":        "no functions to evaluate",
-				"parameter_count":      "no functions to evaluate",
-				"complex_conditionals": "no functions to evaluate",
+				"function_size":          "no functions to evaluate",
+				"cognitive_complexity":   "no functions to evaluate",
+				"parameter_count":        "no functions to evaluate",
+				"code_duplication":       "no duplication detected",
 			},
 		},
 	}
@@ -249,16 +249,16 @@ func TestScoreCodeHealth_AllIssuesHaveSubMetric(t *testing.T) {
 	validSubMetrics := map[string]bool{
 		"function_size":        true,
 		"file_size":            true,
-		"nesting_depth":        true,
+		"cognitive_complexity": true,
 		"parameter_count":      true,
-		"complex_conditionals": true,
+		"code_duplication":     true,
 	}
 
-	// Build a file that triggers ALL issue types.
+	// Build a file that triggers function_size, cognitive_complexity, parameter_count, file_size issues.
+	monsterFn := makeFunction("Huge", 200, 8, 6, 5)
+	monsterFn.CognitiveComplexity = 50
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("monster.go", 600,
-			makeFunction("Huge", 200, 8, 6, 5),
-		),
+		makeFile("monster.go", 600, monsterFn),
 	))
 
 	require.NotEmpty(t, result.Issues, "should generate issues for extreme violations")
@@ -273,44 +273,46 @@ func TestScoreCodeHealth_AllIssuesHaveSubMetric(t *testing.T) {
 }
 
 func TestScoreCodeHealth_SubMetricMatchesIssueType(t *testing.T) {
-	// Default profile thresholds: MaxFunctionLines=50, MaxNestingDepth=3,
+	// Default profile thresholds: MaxFunctionLines=50, MaxCognitiveComplexity=25,
 	// MaxParameters=4, MaxFileLines=300.
-	// Issue thresholds aligned with scoring: funcSize>50, nesting>3, params>4, fileSize>300.
+	ccFunc := makeFunction("ComplexFunc", 20, 2, 1, 0)
+	ccFunc.CognitiveComplexity = 30
+
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("violations.go", 600,
 			// 150 lines → triggers function_size issue (>50)
 			makeFunction("BigFunc", 150, 2, 1, 0),
-			// nesting 6 → triggers nesting_depth issue (>3)
-			makeFunction("DeepFunc", 20, 2, 6, 0),
+			// CC=30 → triggers cognitive_complexity issue (>25)
+			ccFunc,
 			// 8 params → triggers parameter_count issue (>4)
 			makeFunction("ManyParams", 20, 8, 1, 0),
 		),
 	))
 
 	funcSizeIssues := issuesBySubMetric(result.Issues, "function_size")
-	nestingIssues := issuesBySubMetric(result.Issues, "nesting_depth")
+	ccIssues := issuesBySubMetric(result.Issues, "cognitive_complexity")
 	paramIssues := issuesBySubMetric(result.Issues, "parameter_count")
 	fileSizeIssues := issuesBySubMetric(result.Issues, "file_size")
 
 	assert.Len(t, funcSizeIssues, 1, "expected 1 function_size issue for BigFunc")
-	assert.Len(t, nestingIssues, 1, "expected 1 nesting_depth issue for DeepFunc")
+	assert.Len(t, ccIssues, 1, "expected 1 cognitive_complexity issue for ComplexFunc")
 	assert.Len(t, paramIssues, 1, "expected 1 parameter_count issue for ManyParams")
 	assert.Len(t, fileSizeIssues, 1, "expected 1 file_size issue for 600-line file")
 }
 
-func TestScoreCodeHealth_ComplexConditionalsIssueGeneration(t *testing.T) {
-	// Default: MaxConditionalOps=2, issue threshold = 2 (aligned with scoring).
-	// condOps=5 should trigger an issue (5 > 2).
+func TestScoreCodeHealth_CognitiveComplexityIssueGeneration(t *testing.T) {
+	// Default: MaxCognitiveComplexity=25, issue threshold = 25.
+	// CC=30 should trigger an issue (30 > 25).
+	fn := makeFunction("TooComplex", 30, 2, 1, 0)
+	fn.CognitiveComplexity = 30
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("complex.go", 100,
-			makeFunction("TooComplex", 30, 2, 1, 5),
-		),
+		makeFile("complex.go", 100, fn),
 	))
 
-	condIssues := issuesBySubMetric(result.Issues, "complex_conditionals")
-	require.Len(t, condIssues, 1, "expected 1 complex_conditionals issue")
-	assert.Contains(t, condIssues[0].Message, "conditional operators")
-	assert.Equal(t, "complex.go", condIssues[0].File)
+	ccIssues := issuesBySubMetric(result.Issues, "cognitive_complexity")
+	require.Len(t, ccIssues, 1, "expected 1 cognitive_complexity issue")
+	assert.Contains(t, ccIssues[0].Message, "cognitive complexity")
+	assert.Equal(t, "complex.go", ccIssues[0].File)
 }
 
 // ---------------------------------------------------------------------------
@@ -653,24 +655,27 @@ func TestScoreCodeHealth_TestFilesGetRelaxedThresholds(t *testing.T) {
 	}
 }
 
-func TestScoreCodeHealth_TestFileNestingRelaxed(t *testing.T) {
-	// Default: MaxNestingDepth=3. Test files get 3+1=4 for full credit.
-	// Nesting of 4 in test = full credit. In source = partial credit.
+func TestScoreCodeHealth_TestFileCCRelaxed(t *testing.T) {
+	// Default: MaxCognitiveComplexity=25. Test files get 25+5=30 for full credit.
+	// CC=28 in test = full credit. In source = partial credit.
+	testFn := makeFunctionCC("TestHandler", 30, 2, 1, 0, 28)
+	srcFn := makeFunctionCC("Handle", 30, 2, 1, 0, 28)
+
 	testResult := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("handler_test.go", 100, makeFunction("TestHandler", 30, 2, 4, 0)),
+		makeFile("handler_test.go", 100, testFn),
 	))
 	srcResult := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
-		makeFile("handler.go", 100, makeFunction("Handle", 30, 2, 4, 0)),
+		makeFile("handler.go", 100, srcFn),
 	))
 
-	testSM := subMetricByName(testResult, "nesting_depth")
-	srcSM := subMetricByName(srcResult, "nesting_depth")
+	testSM := subMetricByName(testResult, "cognitive_complexity")
+	srcSM := subMetricByName(srcResult, "cognitive_complexity")
 	require.NotNil(t, testSM)
 	require.NotNil(t, srcSM)
 
-	assert.Equal(t, 20, testSM.Score, "nesting 4 in test file should get full credit")
-	// decay(4, 3, k=4) = 1 - 1/12 = 0.917 → round(18.33) = 18
-	assert.Equal(t, 18, srcSM.Score, "nesting 4 in source file should get decay credit")
+	assert.Equal(t, 20, testSM.Score, "CC 28 in test file (threshold 30) should get full credit")
+	// decay(28, 25, k=4) = 1 - 3/100 = 0.97 → round(19.4) = 19
+	assert.Equal(t, 19, srcSM.Score, "CC 28 in source file should get decay credit")
 }
 
 func TestScoreCodeHealth_TestFileIssuesUseRelaxedThresholds(t *testing.T) {
@@ -761,9 +766,15 @@ func TestScoreCodeHealth_OnlyGeneratedFilesGetFullCredit(t *testing.T) {
 // Scoring tiers: full credit, partial credit, zero credit
 // ---------------------------------------------------------------------------
 
+func makeFunctionCC(name string, lines, params, nesting, condOps, cogCC int) domain.Function {
+	fn := makeFunction(name, lines, params, nesting, condOps)
+	fn.CognitiveComplexity = cogCC
+	return fn
+}
+
 func TestScoreCodeHealth_ContinuousDecay(t *testing.T) {
-	// Default: MaxFunctionLines=50, MaxNestingDepth=3, MaxParameters=4, MaxConditionalOps=2.
-	// With k=2, zero credit at 3x threshold.
+	// Default: MaxFunctionLines=50, MaxCognitiveComplexity=15, MaxParameters=4.
+	// With k=4, zero credit at 5x threshold.
 	tests := []struct {
 		name      string
 		subMetric string
@@ -779,12 +790,14 @@ func TestScoreCodeHealth_ContinuousDecay(t *testing.T) {
 		// decay(250,50,k=4) = 0.0 → 0
 		{"function at zero boundary", "function_size", makeFunction("Extreme", 250, 2, 1, 0), 0},
 
-		// nesting_depth: threshold=3, k=4, zero at 15
-		{"nesting within limit", "nesting_depth", makeFunction("Shallow", 20, 2, 3, 0), 20},
-		// decay(4,3,k=4) = 1 - 1/12 = 0.917 → round(18.33) = 18
-		{"nesting slightly over", "nesting_depth", makeFunction("SemiDeep", 20, 2, 4, 0), 18},
-		// decay(6,3,k=4) = 1 - 3/12 = 0.75 → round(15.0) = 15
-		{"nesting well over", "nesting_depth", makeFunction("Deep", 20, 2, 6, 0), 15},
+		// cognitive_complexity: threshold=25, k=4, zero at 125
+		{"CC within limit", "cognitive_complexity", makeFunctionCC("Low", 20, 2, 1, 0, 25), 20},
+		// decay(35,25,k=4) = 1 - 10/100 = 0.9 → round(18.0) = 18
+		{"CC slightly over", "cognitive_complexity", makeFunctionCC("Medium", 20, 2, 1, 0, 35), 18},
+		// decay(50,25,k=4) = 1 - 25/100 = 0.75 → round(15.0) = 15
+		{"CC well over", "cognitive_complexity", makeFunctionCC("High", 20, 2, 1, 0, 50), 15},
+		// decay(125,25,k=4) = 0.0 → 0
+		{"CC at zero boundary", "cognitive_complexity", makeFunctionCC("Extreme", 20, 2, 1, 0, 125), 0},
 
 		// parameter_count: threshold=4, k=4, zero at 20
 		{"params within limit", "parameter_count", makeFunction("FewParams", 20, 4, 1, 0), 20},
@@ -792,13 +805,6 @@ func TestScoreCodeHealth_ContinuousDecay(t *testing.T) {
 		{"params slightly over", "parameter_count", makeFunction("SomeParams", 20, 5, 1, 0), 19},
 		// decay(8,4,k=4) = 1 - 4/16 = 0.75 → round(15.0) = 15
 		{"params well over", "parameter_count", makeFunction("ManyParams", 20, 8, 1, 0), 15},
-
-		// complex_conditionals: threshold=2, k=4, zero at 10
-		{"conditionals within limit", "complex_conditionals", makeFunction("Simple", 20, 2, 1, 2), 20},
-		// decay(3,2,k=4) = 1 - 1/8 = 0.875 → round(17.5) = 18
-		{"conditionals slightly over", "complex_conditionals", makeFunction("SemiComplex", 20, 2, 1, 3), 18},
-		// decay(5,2,k=4) = 1 - 3/8 = 0.625 → round(12.5) = 13
-		{"conditionals well over", "complex_conditionals", makeFunction("Complex", 20, 2, 1, 5), 13},
 	}
 
 	for _, tt := range tests {
@@ -1578,4 +1584,238 @@ func TestScoreCodeHealth_ComplexCasesNotRelaxed(t *testing.T) {
 	sm := subMetricByName(result, "function_size")
 	require.NotNil(t, sm)
 	assert.Equal(t, 12, sm.Score, "complex cases should NOT qualify as switch-dispatch, uses normal threshold")
+}
+
+// ---------------------------------------------------------------------------
+// Cognitive complexity scoring
+// ---------------------------------------------------------------------------
+
+func TestScoreCodeHealth_CognitiveComplexityFullCredit(t *testing.T) {
+	// CC=0 and CC=25 (at threshold) should both get full credit.
+	tests := []struct {
+		name string
+		cc   int
+	}{
+		{"CC=0", 0},
+		{"CC=25 (at threshold)", 25},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fn := makeFunctionCC("Fn", 20, 2, 1, 0, tt.cc)
+			result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+				makeFile("service.go", 100, fn),
+			))
+			sm := subMetricByName(result, "cognitive_complexity")
+			require.NotNil(t, sm)
+			assert.Equal(t, 20, sm.Score)
+		})
+	}
+}
+
+func TestScoreCodeHealth_CognitiveComplexitySeverityTiers(t *testing.T) {
+	// MaxCognitiveComplexity=25. Severity thresholds:
+	// info: > 25 (1.0x), warning: >= 1.5x = 38, error: >= 3x = 75
+	tests := []struct {
+		name    string
+		cc      int
+		wantSev string
+	}{
+		{"just over → info", 26, domain.SeverityInfo},
+		{"1.5x → warning", 38, domain.SeverityWarning},
+		{"3x → error", 75, domain.SeverityError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fn := makeFunctionCC("Fn", 20, 2, 1, 0, tt.cc)
+			result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+				makeFile("service.go", 100, fn),
+			))
+			ccIssues := issuesBySubMetric(result.Issues, "cognitive_complexity")
+			require.Len(t, ccIssues, 1)
+			assert.Equal(t, tt.wantSev, ccIssues[0].Severity)
+		})
+	}
+}
+
+func TestScoreCodeHealth_CognitiveComplexitySwitchDispatchExempt(t *testing.T) {
+	// Switch dispatch functions with high CC should get full credit.
+	fn := makeSwitchDispatchFunc("Any", 130, 40, 1.5)
+	fn.CognitiveComplexity = 50 // high CC but exempt
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("field.go", 200, fn),
+	))
+
+	sm := subMetricByName(result, "cognitive_complexity")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "switch dispatch should be exempt from CC scoring")
+
+	ccIssues := issuesBySubMetric(result.Issues, "cognitive_complexity")
+	assert.Empty(t, ccIssues, "switch dispatch should not produce CC issues")
+}
+
+// ---------------------------------------------------------------------------
+// Code duplication scoring
+// ---------------------------------------------------------------------------
+
+func makeFileWithTokens(path string, totalLines int, tokens []int, fns ...domain.Function) *domain.AnalyzedFile {
+	af := makeFile(path, totalLines, fns...)
+	af.NormalizedTokens = tokens
+	return af
+}
+
+func TestScoreCodeHealth_CodeDuplicationNoTokens(t *testing.T) {
+	// Files without tokens → full credit on code_duplication.
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFile("a.go", 100, makeFunction("A", 20, 2, 1, 0)),
+		makeFile("b.go", 100, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "files without tokens should get full credit")
+}
+
+func TestScoreCodeHealth_CodeDuplicationNoMatch(t *testing.T) {
+	// Two files with completely different token sequences → no duplication.
+	tokensA := make([]int, 100)
+	tokensB := make([]int, 100)
+	for i := range tokensA {
+		tokensA[i] = i
+		tokensB[i] = i + 1000
+	}
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 100, tokensA, makeFunction("A", 20, 2, 1, 0)),
+		makeFileWithTokens("b.go", 100, tokensB, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "files with different tokens should get full credit")
+}
+
+func TestScoreCodeHealth_CodeDuplicationFullMatch(t *testing.T) {
+	// Two files with identical token sequences → duplication detected.
+	tokens := make([]int, 100)
+	for i := range tokens {
+		tokens[i] = i % 10
+	}
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 100, tokens, makeFunction("A", 20, 2, 1, 0)),
+		makeFileWithTokens("b.go", 100, tokens, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	assert.Less(t, sm.Score, 20, "identical tokens across files should be penalized")
+}
+
+func TestScoreCodeHealth_CodeDuplicationIntraFileIgnored(t *testing.T) {
+	// A single file with repeated windows should NOT be flagged (intra-file dupes ignored).
+	tokens := make([]int, 200)
+	for i := range tokens {
+		tokens[i] = i % 10 // creates repeated windows within the same file
+	}
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 200, tokens, makeFunction("A", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "single file should not be penalized for intra-file duplication")
+}
+
+func TestScoreCodeHealth_CodeDuplicationGeneratedExcluded(t *testing.T) {
+	// Generated files with identical tokens should not affect duplication scoring.
+	tokens := make([]int, 100)
+	for i := range tokens {
+		tokens[i] = i % 10
+	}
+	genFile := makeFileWithTokens("gen.go", 100, tokens, makeFunction("A", 20, 2, 1, 0))
+	genFile.IsGenerated = true
+
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 100, tokens, makeFunction("B", 20, 2, 1, 0)),
+		genFile,
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	assert.Equal(t, 20, sm.Score, "generated file duplication should not affect score")
+}
+
+func TestScoreCodeHealth_CodeDuplicationIssueGeneration(t *testing.T) {
+	// Two files with identical tokens → duplication issue should be generated.
+	tokens := make([]int, 100)
+	for i := range tokens {
+		tokens[i] = i % 10
+	}
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 100, tokens, makeFunction("A", 20, 2, 1, 0)),
+		makeFileWithTokens("b.go", 100, tokens, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	dupIssues := issuesBySubMetric(result.Issues, "code_duplication")
+	// The files should have duplication detected and issues generated for files above threshold.
+	for _, iss := range dupIssues {
+		assert.Equal(t, "code_health", iss.Category)
+		assert.Equal(t, "code_duplication", iss.SubMetric)
+	}
+}
+
+func TestScoreCodeHealth_CodeDuplicationOverlappingWindows(t *testing.T) {
+	// Two files share a 100-token sequence. The duplication scorer should merge
+	// overlapping windows correctly: e.g., windows starting at 0, 1, 2, ... 25
+	// all overlap and should cover tokens [0, 100), not 26×75 = 1950 tokens.
+	tokens := make([]int, 150)
+	for i := range tokens {
+		tokens[i] = i % 20
+	}
+	// File B shares the first 100 tokens with file A but diverges after.
+	tokensB := make([]int, 150)
+	copy(tokensB, tokens[:100])
+	for i := 100; i < 150; i++ {
+		tokensB[i] = 99 + i // unique values so no match
+	}
+
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("a.go", 150, tokens, makeFunction("A", 20, 2, 1, 0)),
+		makeFileWithTokens("b.go", 150, tokensB, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	sm := subMetricByName(result, "code_duplication")
+	require.NotNil(t, sm)
+	// With correct merging, duplication should be partial (100/150 tokens ≈ 67%).
+	// Without merging, it would be massively overcounted.
+	// The score should be penalized but not zero.
+	assert.Greater(t, sm.Score, 0, "overlapping windows should not over-penalize to zero")
+	assert.Less(t, sm.Score, 20, "partial duplication should still be penalized")
+}
+
+func TestScoreCodeHealth_CodeDuplicationTestFileRelaxed(t *testing.T) {
+	// Test files get 2x the duplication threshold. A test file at 20% duplication
+	// should not be penalized when MaxDuplicationPercent=15 (threshold becomes 30%).
+	tokens := make([]int, 100)
+	for i := range tokens {
+		tokens[i] = i % 10
+	}
+	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
+		makeFileWithTokens("service.go", 100, tokens, makeFunction("A", 20, 2, 1, 0)),
+		makeFileWithTokens("service_test.go", 100, tokens, makeFunction("B", 20, 2, 1, 0)),
+	))
+
+	// Both files have identical tokens (100% duplication), but test file uses 2x threshold.
+	dupIssues := issuesBySubMetric(result.Issues, "code_duplication")
+	testIssues := 0
+	srcIssues := 0
+	for _, iss := range dupIssues {
+		if strings.HasSuffix(iss.File, "_test.go") {
+			testIssues++
+		} else {
+			srcIssues++
+		}
+	}
+	assert.Equal(t, 1, srcIssues, "source file should have duplication issue")
+	// Test file also has 100% duplication which exceeds even the 2x threshold (30%),
+	// so it should still generate an issue, but at a lower severity.
+	assert.Equal(t, 1, testIssues, "test file should also have duplication issue (100% > 30%)")
 }

@@ -3,10 +3,13 @@ package scoring
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/openkraft/openkraft/internal/domain"
 )
+
+func sortInts(s []int) { slices.Sort(s) }
 
 // decayK controls how gradually credit decays past the threshold.
 // With k=4, credit reaches zero at threshold*5 (5x threshold).
@@ -54,9 +57,9 @@ func ScoreCodeHealth(profile *domain.ScoringProfile, scan *domain.ScanResult, an
 
 	sm1 := scoreFunctionSize(profile, analyzed)
 	sm2 := scoreFileSize(profile, analyzed)
-	sm3 := scoreNestingDepth(profile, analyzed)
+	sm3 := scoreCognitiveComplexity(profile, analyzed)
 	sm4 := scoreParameterCount(profile, analyzed)
-	sm5 := scoreComplexConditionals(profile, analyzed)
+	sm5, dupData := scoreCodeDuplication(profile, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4, sm5}
 
@@ -65,7 +68,7 @@ func ScoreCodeHealth(profile *domain.ScoringProfile, scan *domain.ScanResult, an
 		base += sm.Score
 	}
 
-	cat.Issues = collectCodeHealthIssues(profile, analyzed)
+	cat.Issues = collectCodeHealthIssues(profile, analyzed, dupData)
 
 	// Count non-generated functions for normalization.
 	funcCount := 0
@@ -236,23 +239,29 @@ func scoreFileSize(profile *domain.ScoringProfile, analyzed map[string]*domain.A
 	return sm
 }
 
-// scoreNestingDepth (20 pts): continuous decay from profile.MaxNestingDepth.
-func scoreNestingDepth(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
-	sm := domain.SubMetric{Name: "nesting_depth", Points: 20}
-	maxDepth := profile.MaxNestingDepth
+// scoreCognitiveComplexity (20 pts): continuous decay from profile.MaxCognitiveComplexity.
+// Test files: threshold + 5 (additive, not 2x — CC is already additive).
+// Switch-dispatch functions: exempt (earn full credit).
+func scoreCognitiveComplexity(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+	sm := domain.SubMetric{Name: "cognitive_complexity", Points: 20}
+	maxCC := profile.MaxCognitiveComplexity
 
 	total, earned := 0, 0.0
 	for _, af := range analyzed {
 		if af.IsGenerated {
 			continue
 		}
-		effectiveMax := maxDepth
+		effectiveMax := maxCC
 		if isTestFile(af.Path) {
-			effectiveMax = maxDepth + 1
+			effectiveMax = maxCC + 5
 		}
 		for _, fn := range af.Functions {
 			total++
-			earned += decayCredit(fn.MaxNesting, effectiveMax)
+			if isSwitchDispatch(fn) {
+				earned += 1.0
+				continue
+			}
+			earned += decayCredit(fn.CognitiveComplexity, effectiveMax)
 		}
 	}
 	if total == 0 {
@@ -264,7 +273,7 @@ func scoreNestingDepth(profile *domain.ScoringProfile, analyzed map[string]*doma
 	ratio := earned / float64(total)
 	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	sm.Score = min(sm.Score, sm.Points)
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within nesting limits (max %d)", ratio*100, total, maxDepth)
+	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within cognitive complexity limits (max %d)", ratio*100, total, maxCC)
 	return sm
 }
 
@@ -307,36 +316,162 @@ func scoreParameterCount(profile *domain.ScoringProfile, analyzed map[string]*do
 	return sm
 }
 
-// scoreComplexConditionals (20 pts): continuous decay from profile.MaxConditionalOps.
-func scoreComplexConditionals(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
-	sm := domain.SubMetric{Name: "complex_conditionals", Points: 20}
-	maxOps := profile.MaxConditionalOps
+/// scoreCodeDuplication (20 pts): Rabin-Karp rolling hash over NormalizedTokens.
+// Detects cross-file duplication (intra-file duplicates are ignored).
+// Returns a dupInfo map keyed by file path for use by collectCodeHealthIssues.
 
-	total, earned := 0, 0.0
+// dupInfo holds per-file duplication data computed by scoreCodeDuplication
+// and consumed by collectCodeHealthIssues without mutating domain types.
+type dupInfo struct {
+	lines   int // estimated duplicated lines
+	percent int // duplication percentage
+}
+
+func scoreCodeDuplication(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) (domain.SubMetric, map[string]dupInfo) {
+	sm := domain.SubMetric{Name: "code_duplication", Points: 20}
+	windowSize := profile.MinCloneTokens
+	if windowSize <= 0 {
+		windowSize = 50
+	}
+	maxDupPercent := profile.MaxDuplicationPercent
+	if maxDupPercent <= 0 {
+		maxDupPercent = 5
+	}
+
+	// Collect files with enough tokens.
+	type fileEntry struct {
+		path   string
+		af     *domain.AnalyzedFile
+		tokens []int
+	}
+	var files []fileEntry
 	for _, af := range analyzed {
-		if af.IsGenerated {
+		if af.IsGenerated || len(af.NormalizedTokens) < windowSize {
 			continue
 		}
-		effectiveMax := maxOps
-		if isTestFile(af.Path) {
-			effectiveMax = maxOps + 1
+		files = append(files, fileEntry{path: af.Path, af: af, tokens: af.NormalizedTokens})
+	}
+
+	dupMap := make(map[string]dupInfo)
+
+	if len(files) < 2 {
+		// Need at least 2 files for cross-file duplication.
+		sm.Score = sm.Points
+		sm.Detail = "no duplication detected"
+		return sm, dupMap
+	}
+
+	// Build hash → set of file indices.
+	type loc struct {
+		fileIdx int
+		pos     int
+	}
+	hashMap := make(map[uint64][]loc)
+
+	const base uint64 = 131
+	for fi, fe := range files {
+		tokens := fe.tokens
+		if len(tokens) < windowSize {
+			continue
 		}
-		for _, fn := range af.Functions {
-			total++
-			earned += decayCredit(fn.MaxCondOps, effectiveMax)
+
+		// Compute initial hash and basePow.
+		var h uint64
+		var basePow uint64 = 1
+		for i := 0; i < windowSize; i++ {
+			h = h*base + uint64(tokens[i]+10) // +10 to avoid negative token issues
+			if i < windowSize-1 {
+				basePow *= base
+			}
+		}
+		hashMap[h] = append(hashMap[h], loc{fi, 0})
+
+		// Roll the hash.
+		for i := 1; i <= len(tokens)-windowSize; i++ {
+			removed := uint64(tokens[i-1] + 10)
+			added := uint64(tokens[i+windowSize-1] + 10)
+			h = h*base - removed*basePow*base + added
+			hashMap[h] = append(hashMap[h], loc{fi, i})
 		}
 	}
+
+	// Find hashes that appear in ≥2 distinct files.
+	// Track the starting positions of duplicate windows per file so we can
+	// compute covered token ranges without overcounting overlaps.
+	dupPositions := make(map[int][]int) // fileIdx → sorted start positions
+	for _, locs := range hashMap {
+		fileSet := make(map[int]bool)
+		for _, l := range locs {
+			fileSet[l.fileIdx] = true
+		}
+		if len(fileSet) < 2 {
+			continue // intra-file only — skip
+		}
+		for _, l := range locs {
+			dupPositions[l.fileIdx] = append(dupPositions[l.fileIdx], l.pos)
+		}
+	}
+
+	// Estimate duplicated lines and score each file.
+	total, earned := 0, 0.0
+	for fi, fe := range files {
+		total++
+		positions := dupPositions[fi]
+		if len(positions) == 0 {
+			earned += 1.0
+			continue
+		}
+
+		// Count unique token positions covered by duplicate windows.
+		// Each window starting at pos covers tokens [pos, pos+windowSize).
+		// Merge overlapping ranges to avoid overcounting.
+		covered := 0
+		maxEnd := 0
+		// Sort positions (they may arrive out of order from hash map iteration).
+		sortInts(positions)
+		for _, pos := range positions {
+			end := pos + windowSize
+			if pos >= maxEnd {
+				// Non-overlapping new range.
+				covered += windowSize
+			} else if end > maxEnd {
+				// Partially overlapping — only count the extension.
+				covered += end - maxEnd
+			}
+			if end > maxEnd {
+				maxEnd = end
+			}
+		}
+
+		// Convert covered tokens to lines (conservative: at least 1 token per line).
+		tokensPerLine := float64(len(fe.tokens)) / float64(max(1, fe.af.TotalLines))
+		if tokensPerLine < 1 {
+			tokensPerLine = 1
+		}
+		dupLines := int(float64(covered) / tokensPerLine)
+		if dupLines > fe.af.TotalLines {
+			dupLines = fe.af.TotalLines
+		}
+		dupPercent := dupLines * 100 / max(1, fe.af.TotalLines)
+		dupMap[fe.path] = dupInfo{lines: dupLines, percent: dupPercent}
+		thresh := maxDupPercent
+		if isTestFile(fe.path) {
+			thresh = maxDupPercent * 2 // test files get relaxed threshold
+		}
+		earned += decayCredit(dupPercent, thresh)
+	}
+
 	if total == 0 {
 		sm.Score = sm.Points
-		sm.Detail = "no functions to evaluate"
-		return sm
+		sm.Detail = "no files to evaluate"
+		return sm, dupMap
 	}
 
 	ratio := earned / float64(total)
 	sm.Score = int(math.Round(ratio * float64(sm.Points)))
 	sm.Score = min(sm.Score, sm.Points)
-	sm.Detail = fmt.Sprintf("%.0f%% of %d functions within conditional complexity limits (max %d ops)", ratio*100, total, maxOps)
-	return sm
+	sm.Detail = fmt.Sprintf("%.0f%% of %d files within duplication limits (max %d%%)", ratio*100, total, maxDupPercent)
+	return sm, dupMap
 }
 
 // isExemptFromParams reports whether the function name matches any of the
@@ -389,7 +524,7 @@ func filePattern(path string) string {
 	return ""
 }
 
-func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
+func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile, dupData map[string]dupInfo) []domain.Issue {
 	var issues []domain.Issue
 
 	for _, af := range analyzed {
@@ -401,15 +536,17 @@ func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string
 		// Compute per-file thresholds aligned with scoring boundaries.
 		// Issues start where score penalties start — no silent zone.
 		funcThresh := profile.MaxFunctionLines
-		nestThresh := profile.MaxNestingDepth
 		paramThresh := profile.MaxParameters
-		condThresh := profile.MaxConditionalOps
+		ccThresh := profile.MaxCognitiveComplexity
 		fileThresh := profile.MaxFileLines
+		dupThresh := profile.MaxDuplicationPercent
+		if dupThresh <= 0 {
+			dupThresh = 5
+		}
 		if testFile {
 			funcThresh = profile.MaxFunctionLines * 2
-			nestThresh = profile.MaxNestingDepth + 1
 			paramThresh = profile.MaxParameters + 2
-			condThresh = profile.MaxConditionalOps + 1
+			ccThresh = profile.MaxCognitiveComplexity + 5
 			fileThresh = profile.MaxFileLines * 2
 		}
 		if af.HasCGoImport {
@@ -442,14 +579,14 @@ func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string
 					Pattern:   pat,
 				})
 			}
-			if fn.MaxNesting > nestThresh {
+			if !isSwitchDispatch(fn) && fn.CognitiveComplexity > ccThresh {
 				issues = append(issues, domain.Issue{
-					Severity:  issueSeverity(fn.MaxNesting, nestThresh),
+					Severity:  issueSeverity(fn.CognitiveComplexity, ccThresh),
 					Category:  "code_health",
-					SubMetric: "nesting_depth",
+					SubMetric: "cognitive_complexity",
 					File:      af.Path,
 					Line:      fn.LineStart,
-					Message:   fmt.Sprintf("function %s has nesting depth %d (>%d)", fn.Name, fn.MaxNesting, nestThresh),
+					Message:   fmt.Sprintf("function %s has cognitive complexity %d (>%d)", fn.Name, fn.CognitiveComplexity, ccThresh),
 					Pattern:   pat,
 				})
 			}
@@ -464,17 +601,6 @@ func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string
 					Pattern:   pat,
 				})
 			}
-			if fn.MaxCondOps > condThresh {
-				issues = append(issues, domain.Issue{
-					Severity:  issueSeverity(fn.MaxCondOps, condThresh),
-					Category:  "code_health",
-					SubMetric: "complex_conditionals",
-					File:      af.Path,
-					Line:      fn.LineStart,
-					Message:   fmt.Sprintf("function %s has %d conditional operators (>%d)", fn.Name, fn.MaxCondOps, condThresh),
-					Pattern:   pat,
-				})
-			}
 		}
 		if af.TotalLines > fileThresh {
 			issues = append(issues, domain.Issue{
@@ -485,6 +611,23 @@ func collectCodeHealthIssues(profile *domain.ScoringProfile, analyzed map[string
 				Message:   fmt.Sprintf("file has %d lines (>%d)", af.TotalLines, fileThresh),
 				Pattern:   filePattern(af.Path),
 			})
+		}
+		// Code duplication issues (file-level, after function loop).
+		if di, ok := dupData[af.Path]; ok && di.lines > 0 {
+			fileDupThresh := dupThresh
+			if isTestFile(af.Path) {
+				fileDupThresh = dupThresh * 2 // test files get relaxed threshold
+			}
+			if di.percent > fileDupThresh {
+				issues = append(issues, domain.Issue{
+					Severity:  issueSeverity(di.percent, fileDupThresh),
+					Category:  "code_health",
+					SubMetric: "code_duplication",
+					File:      af.Path,
+					Message:   fmt.Sprintf("file has %d%% duplicated lines (%d lines, >%d%%)", di.percent, di.lines, fileDupThresh),
+					Pattern:   filePattern(af.Path),
+				})
+			}
 		}
 	}
 	return issues
