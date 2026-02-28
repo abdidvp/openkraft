@@ -3,6 +3,13 @@ dist/
 *.exe
 *.test
 *.out
+*.prof
+coverage.out
 .DS_Store
 .openkraft/
 openkraft
+.env
+.idea/
+.vscode/
+*.swp
+*.swo

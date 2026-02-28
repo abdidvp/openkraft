@@ -1,5 +1,10 @@
 # OpenKraft
 
+[![CI](https://github.com/abdidvp/openkraft/actions/workflows/ci.yml/badge.svg)](https://github.com/abdidvp/openkraft/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/abdidvp/openkraft)](https://goreportcard.com/report/github.com/abdidvp/openkraft)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Go Reference](https://pkg.go.dev/badge/github.com/abdidvp/openkraft.svg)](https://pkg.go.dev/github.com/abdidvp/openkraft)
+
 **Stop shipping 80% code.**
 
 OpenKraft scores your Go codebase's AI-readiness and enforces that every module meets the quality of your best module.
@@ -7,7 +12,7 @@ OpenKraft scores your Go codebase's AI-readiness and enforces that every module 
 ## Install
 
 ```bash
-go install github.com/openkraft/openkraft/cmd/openkraft@latest
+go install github.com/abdidvp/openkraft/cmd/openkraft@latest
 ```
 
 ## Quick Start
@@ -107,7 +112,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - run: go install github.com/openkraft/openkraft/cmd/openkraft@latest
+      - run: go install github.com/abdidvp/openkraft/cmd/openkraft@latest
       - run: openkraft score . --ci --min 70
 ```
 
