@@ -16,7 +16,7 @@ func sampleScore() *domain.Score {
 				Name: "code_health", Score: 80, Weight: 0.25,
 				SubMetrics: []domain.SubMetric{
 					{Name: "function_size", Score: 20, Points: 20, Detail: "all functions small"},
-					{Name: "nesting_depth", Score: 5, Points: 20, Detail: "3 deep functions"},
+					{Name: "cognitive_complexity", Score: 5, Points: 20, Detail: "3 complex functions"},
 				},
 				Issues: []domain.Issue{
 					{Severity: "error", Category: "code_health", File: "internal/domain/foo.go", Message: "function too long"},
@@ -57,7 +57,7 @@ func TestRenderScore_ContainsGrade(t *testing.T) {
 func TestRenderScore_ContainsSubMetrics(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
 	assert.Contains(t, output, "function_size")
-	assert.Contains(t, output, "nesting_depth")
+	assert.Contains(t, output, "cognitive_complexity")
 	assert.Contains(t, output, "test_presence")
 	assert.Contains(t, output, "test_naming")
 }
@@ -65,7 +65,7 @@ func TestRenderScore_ContainsSubMetrics(t *testing.T) {
 func TestRenderScore_ShowsSubMetricDetails(t *testing.T) {
 	output := tui.RenderScore(sampleScore())
 	assert.Contains(t, output, "all functions small")
-	assert.Contains(t, output, "3 deep functions")
+	assert.Contains(t, output, "3 complex functions")
 	assert.Contains(t, output, "none found")
 }
 

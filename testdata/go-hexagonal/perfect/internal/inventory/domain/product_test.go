@@ -14,6 +14,12 @@ func TestNewProduct(t *testing.T) {
 	if p.Name != "Widget" {
 		t.Errorf("expected Widget, got %s", p.Name)
 	}
+	if p.SKU != "WDG-001" {
+		t.Errorf("expected SKU WDG-001, got %s", p.SKU)
+	}
+	if p.Price != 9.99 {
+		t.Errorf("expected price 9.99, got %f", p.Price)
+	}
 }
 
 func TestProduct_Validate(t *testing.T) {
@@ -22,9 +28,9 @@ func TestProduct_Validate(t *testing.T) {
 		product domain.Product
 		wantErr bool
 	}{
-		{"valid", domain.Product{Name: "W", SKU: "S", Price: 1}, false},
-		{"empty name", domain.Product{SKU: "S", Price: 1}, true},
-		{"empty sku", domain.Product{Name: "W", Price: 1}, true},
+		{"valid product", domain.Product{Name: "W", SKU: "S", Price: 1}, false},
+		{"missing name", domain.Product{SKU: "S", Price: 1}, true},
+		{"missing sku", domain.Product{Name: "W", Price: 1}, true},
 		{"negative price", domain.Product{Name: "W", SKU: "S", Price: -1}, true},
 	}
 	for _, tt := range tests {
@@ -34,5 +40,15 @@ func TestProduct_Validate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestProduct_DefaultQuantity(t *testing.T) {
+	p, err := domain.NewProduct("Gadget", "GDG-100", 29.99)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Quantity != 0 {
+		t.Errorf("expected default quantity 0, got %d", p.Quantity)
 	}
 }

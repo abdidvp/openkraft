@@ -45,3 +45,47 @@ func (h *UserHandler) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		"email": user.Email(),
 	})
 }
+
+// routeRequest dispatches requests based on method and path combinations.
+// This intentionally violates cognitive complexity limits for test fixture purposes.
+func (h *UserHandler) routeRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		if r.URL.Path == "/users" {
+			if r.URL.Query().Get("search") != "" {
+				if r.URL.Query().Get("page") != "" {
+					for i := 0; i < 10; i++ {
+						if i > 5 {
+							w.Write([]byte("paginated search"))
+						}
+					}
+				}
+			} else if r.URL.Query().Get("sort") != "" {
+				w.Write([]byte("sorted list"))
+			}
+		} else if r.URL.Path == "/users/export" {
+			if r.Header.Get("Accept") == "text/csv" {
+				w.Write([]byte("csv"))
+			} else if r.Header.Get("Accept") == "application/pdf" {
+				w.Write([]byte("pdf"))
+			} else {
+				w.Write([]byte("json"))
+			}
+		}
+	} else if r.Method == "POST" {
+		if r.URL.Path == "/users" {
+			h.HandleCreateUser(w, r)
+		} else if r.URL.Path == "/users/bulk" {
+			for i := 0; i < 100; i++ {
+				if i%10 == 0 {
+					w.Write([]byte("progress"))
+				}
+			}
+		}
+	} else if r.Method == "DELETE" {
+		if r.URL.Query().Get("force") == "true" {
+			w.Write([]byte("force deleted"))
+		} else {
+			w.Write([]byte("soft deleted"))
+		}
+	}
+}

@@ -103,13 +103,18 @@ func generateConfig(pt domain.ProjectType) string {
 #   max_nesting_depth: %d
 #   max_parameters: %d
 #   max_conditional_ops: %d
+#   max_cognitive_complexity: %d
+#   max_duplication_percent: %d
+#   min_clone_tokens: %d
 #   min_test_ratio: %.1f
 #   max_global_var_penalty: %d
 #   naming_convention: %s
 `, profile.MaxFunctionLines, profile.MaxFileLines,
 		profile.MaxNestingDepth, profile.MaxParameters,
-		profile.MaxConditionalOps, profile.MinTestRatio,
-		profile.MaxGlobalVarPenalty, profile.NamingConvention)
+		profile.MaxConditionalOps, profile.MaxCognitiveComplexity,
+		profile.MaxDuplicationPercent, profile.MinCloneTokens,
+		profile.MinTestRatio, profile.MaxGlobalVarPenalty,
+		profile.NamingConvention)
 
 	result := fmt.Sprintf("# OpenKraft configuration\n# See: https://github.com/openkraft/openkraft\n\nproject_type: %s\n\n%s\n", pt, weightsSection)
 

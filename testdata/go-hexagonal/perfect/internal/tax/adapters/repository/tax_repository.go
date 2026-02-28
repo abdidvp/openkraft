@@ -1,47 +1,51 @@
 package repository
 
 import (
-	"sync"
-
 	"example.com/perfect/internal/tax/domain"
 )
 
+// PostgresTaxRuleRepository stores tax rules in an append-only slice with
+// country-based indexing for efficient lookups by jurisdiction.
 type PostgresTaxRuleRepository struct {
-	mu    sync.RWMutex
-	rules map[string]*domain.TaxRule
+	entries   []*domain.TaxRule
+	byCountry map[string][]*domain.TaxRule
 }
 
 func NewPostgresTaxRuleRepository() *PostgresTaxRuleRepository {
 	return &PostgresTaxRuleRepository{
-		rules: make(map[string]*domain.TaxRule),
+		byCountry: make(map[string][]*domain.TaxRule),
 	}
 }
 
 func (r *PostgresTaxRuleRepository) Create(rule *domain.TaxRule) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.rules[rule.ID] = rule
+	r.entries = append(r.entries, rule)
+	r.byCountry[rule.Country] = append(r.byCountry[rule.Country], rule)
 	return nil
 }
 
 func (r *PostgresTaxRuleRepository) GetByID(id string) (*domain.TaxRule, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	rule, ok := r.rules[id]
-	if !ok {
-		return nil, domain.ErrTaxRuleNotFound
+	for _, entry := range r.entries {
+		if entry.ID == id {
+			return entry, nil
+		}
 	}
-	return rule, nil
+	return nil, domain.ErrTaxRuleNotFound
+}
+
+func (r *PostgresTaxRuleRepository) ListByCountry(country string) ([]*domain.TaxRule, error) {
+	rules, ok := r.byCountry[country]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]*domain.TaxRule, len(rules))
+	copy(out, rules)
+	return out, nil
 }
 
 func (r *PostgresTaxRuleRepository) List() ([]*domain.TaxRule, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	rules := make([]*domain.TaxRule, 0, len(r.rules))
-	for _, rule := range r.rules {
-		rules = append(rules, rule)
-	}
-	return rules, nil
+	out := make([]*domain.TaxRule, len(r.entries))
+	copy(out, r.entries)
+	return out, nil
 }
 
 func getQuerier() string {
