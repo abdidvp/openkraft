@@ -12,30 +12,42 @@ import (
 // ScoreDiscoverability evaluates how easily AI agents can find relevant code.
 // Weight: 0.20 (20% of overall score).
 func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.CategoryScore {
+	if profile == nil {
+		p := domain.DefaultProfile()
+		profile = &p
+	}
+
 	cat := domain.CategoryScore{
 		Name:   "discoverability",
 		Weight: 0.20,
 	}
 
-	sm1 := scoreNamingUniqueness(analyzed)
+	sm1 := scoreNamingUniqueness(profile, analyzed)
 	sm2 := scoreFileNamingConventions(profile, scan, analyzed)
 	sm3 := scorePredictableStructure(profile, modules, scan, analyzed)
 	sm4 := scoreDiscoverabilityDependencyDirection(modules, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
 
-	total := 0
+	base := 0
 	for _, sm := range cat.SubMetrics {
-		total += sm.Score
+		base += sm.Score
 	}
-	cat.Score = total
 
 	cat.Issues = collectDiscoverabilityIssues(profile, modules, scan, analyzed)
+
+	funcCount := countExportedFunctions(analyzed)
+	if funcCount > 0 {
+		cat.Score = max(0, base-severityPenalty(cat.Issues, funcCount))
+	} else {
+		cat.Score = base
+	}
+
 	return cat
 }
 
-// scoreNamingUniqueness (25 pts): composite — word count 40% + vocabulary specificity 30% + Shannon entropy 30%.
-func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreNamingUniqueness (25 pts): composite — WCS, specificity, entropy, collision rate.
+func scoreNamingUniqueness(profile *domain.ScoringProfile, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "naming_uniqueness", Points: 25}
 
 	var names []string
@@ -43,7 +55,23 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 	count := 0
 	descriptive := 0
 
+	minWCS := profile.MinNamingWordScore
+	if minWCS <= 0 {
+		minWCS = 0.7
+	}
+	w := profile.NamingCompositeWeights
+	cw := profile.CollisionWeight
+	if w == [3]float64{} {
+		w = [3]float64{0.30, 0.30, 0.25}
+		cw = 0.15
+	}
+
+	domainVocab := ExtractDomainVocabulary(analyzed)
+
 	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
 		for _, fn := range af.Functions {
 			if !fn.Exported {
 				continue
@@ -51,9 +79,9 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 			names = append(names, fn.Name)
 			wcs := WordCountScore(fn.Name)
 			totalWCS += wcs
-			totalVS += VocabularySpecificity(fn.Name)
+			totalVS += IdentifierSpecificity(fn.Name, domainVocab)
 			count++
-			if wcs >= 0.7 {
+			if wcs >= minWCS {
 				descriptive++
 			}
 		}
@@ -67,8 +95,9 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 	avgWCS := totalWCS / float64(count)
 	avgVS := totalVS / float64(count)
 	entropy := ShannonEntropy(names)
+	collisionRate := SymbolCollisionRate(analyzed)
 
-	composite := avgWCS*0.4 + avgVS*0.3 + entropy*0.3
+	composite := avgWCS*w[0] + avgVS*w[1] + entropy*w[2] + (1-collisionRate)*cw
 	sm.Score = min(int(math.Round(composite*float64(sm.Points))), sm.Points)
 	sm.Detail = fmt.Sprintf("%d of %d exported functions have descriptive names (2+ words)",
 		descriptive, count)
@@ -288,17 +317,10 @@ func scoreDiscoverabilityDependencyDirection(modules []domain.DetectedModule, an
 		return sm
 	}
 
-	if violations == 0 {
-		sm.Score = sm.Points
-		sm.Detail = fmt.Sprintf("all %d layered files follow correct dependency direction", totalChecked)
-	} else {
-		penalty := violations * 5
-		sm.Score = sm.Points - penalty
-		if sm.Score < 0 {
-			sm.Score = 0
-		}
-		sm.Detail = fmt.Sprintf("%d dependency direction violation(s) found", violations)
-	}
+	violationRate := 1.0 - float64(violations)/float64(totalChecked)
+	sm.Score = min(int(math.Round(max(0, violationRate)*float64(sm.Points))), sm.Points)
+	sm.Detail = fmt.Sprintf("%d dependency violation(s) in %d layered files (%.0f%% clean)",
+		violations, totalChecked, violationRate*100)
 	return sm
 }
 
@@ -323,11 +345,31 @@ func jaccard(a, b map[string]bool) float64 {
 	return float64(intersection) / float64(len(union))
 }
 
+// countExportedFunctions counts exported functions in non-generated files.
+func countExportedFunctions(analyzed map[string]*domain.AnalyzedFile) int {
+	count := 0
+	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if fn.Exported {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
 	var issues []domain.Issue
 
-	// 1. naming_uniqueness: flag exported single-word functions (WCS < 0.7).
+	// 1. naming_uniqueness: flag exported single-word functions (WCS < threshold).
 	//    Skip: generated files, test files, Go interface methods, methods with receiver + single word.
+	minWCS := profile.MinNamingWordScore
+	if minWCS <= 0 {
+		minWCS = 0.7
+	}
 	for _, af := range analyzed {
 		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
 			continue
@@ -337,12 +379,9 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 				continue
 			}
 			if fn.Receiver != "" && WordCount(fn.Name) == 1 {
-				// Methods with a receiver provide context through the type name
-				// (e.g., (*User).String(), (*Repo).Close()) — works for any
-				// interface in any project, no hardcoded exemption list needed.
 				continue
 			}
-			if WordCountScore(fn.Name) < 0.7 {
+			if WordCountScore(fn.Name) < minWCS {
 				issues = append(issues, domain.Issue{
 					Severity:  domain.SeverityInfo,
 					Category:  "discoverability",
@@ -356,11 +395,20 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 	}
 
 	// 2. file_naming_conventions: flag files violating dominant pattern.
-	//    Only when dominant pattern has ≥60% consistency to avoid FP on 50/50 splits.
+	//    Only when dominant pattern has ≥threshold consistency to avoid FP on 50/50 splits.
 	//    Skips generated files via classifyFileNaming.
+	consistencyThreshold := profile.NamingConsistencyThreshold
+	if consistencyThreshold <= 0 {
+		consistencyThreshold = 0.60
+	}
 	if scan != nil && len(scan.GoFiles) > 0 {
 		c := classifyFileNaming(profile, scan.GoFiles, analyzed)
-		if c.total > 0 && c.consistency >= 0.60 {
+		if c.total > 0 && c.consistency >= consistencyThreshold {
+			// Severity based on how inconsistent the project is.
+			fileSev := domain.SeverityInfo
+			if c.consistency < 0.40 {
+				fileSev = domain.SeverityWarning
+			}
 			for _, f := range scan.GoFiles {
 				base := filepath.Base(f)
 				if strings.HasSuffix(base, "_test.go") {
@@ -376,7 +424,7 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 				isSuffixed := strings.Contains(name, "_")
 				if c.dominantIsSuffixed && !isSuffixed {
 					issues = append(issues, domain.Issue{
-						Severity:  domain.SeverityInfo,
+						Severity:  fileSev,
 						Category:  "discoverability",
 						SubMetric: "file_naming_conventions",
 						File:      f,
@@ -384,7 +432,7 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 					})
 				} else if !c.dominantIsSuffixed && isSuffixed {
 					issues = append(issues, domain.Issue{
-						Severity:  domain.SeverityInfo,
+						Severity:  fileSev,
 						Category:  "discoverability",
 						SubMetric: "file_naming_conventions",
 						File:      f,
@@ -403,16 +451,31 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 				layerCount[l]++
 			}
 		}
-		threshold := len(modules) / 2
+		peerThreshold := len(modules) / 2
+		totalLayers := len(layerCount)
 		for _, m := range modules {
 			has := map[string]bool{}
 			for _, l := range m.Layers {
 				has[l] = true
 			}
+			missingCount := 0
 			for layer, count := range layerCount {
-				if count > threshold && !has[layer] {
+				if count > peerThreshold && !has[layer] {
+					missingCount++
+				}
+			}
+			// Severity based on fraction of peer layers missing.
+			structSev := domain.SeverityInfo
+			if totalLayers > 0 {
+				missingRatio := float64(missingCount) / float64(totalLayers)
+				if missingRatio > 0.75 {
+					structSev = domain.SeverityWarning
+				}
+			}
+			for layer, count := range layerCount {
+				if count > peerThreshold && !has[layer] {
 					issues = append(issues, domain.Issue{
-						Severity:  domain.SeverityInfo,
+						Severity:  structSev,
 						Category:  "discoverability",
 						SubMetric: "predictable_structure",
 						File:      m.Path,
@@ -436,14 +499,102 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 			layer := fileLayer(f)
 			for _, imp := range af.Imports {
 				if violatesDependencyDirection(layer, imp) {
+					impLayer := importLayer(imp)
+					pat := layer + "→" + impLayer
 					issues = append(issues, domain.Issue{
 						Severity:  domain.SeverityError,
 						Category:  "discoverability",
 						SubMetric: "dependency_direction",
 						File:      f,
 						Message:   fmt.Sprintf("%s layer imports %s (dependency direction violation)", layer, imp),
+						Pattern:   pat,
 					})
 				}
+			}
+		}
+	}
+
+	// 5. Symbol collision: flag exported names appearing in 2+ packages.
+	type collisionInfo struct {
+		packages map[string]bool
+	}
+	collisionMap := make(map[string]*collisionInfo)
+	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if !fn.Exported {
+				continue
+			}
+			ci, ok := collisionMap[fn.Name]
+			if !ok {
+				ci = &collisionInfo{packages: make(map[string]bool)}
+				collisionMap[fn.Name] = ci
+			}
+			ci.packages[af.Package] = true
+		}
+	}
+	for name, ci := range collisionMap {
+		if len(ci.packages) >= 2 {
+			issues = append(issues, domain.Issue{
+				Severity:  domain.SeverityInfo,
+				Category:  "discoverability",
+				SubMetric: "naming_uniqueness",
+				Message:   fmt.Sprintf("exported function %q appears in %d packages", name, len(ci.packages)),
+			})
+		}
+	}
+
+	// 6. Package name quality: flag vague package names.
+	vaguePackages := map[string]bool{
+		"util": true, "utils": true, "common": true, "helpers": true,
+		"misc": true, "base": true, "lib": true, "shared": true,
+		"tools": true, "types": true,
+	}
+	seenPackages := make(map[string]bool)
+	for _, af := range analyzed {
+		if af.IsGenerated || af.Package == "" || seenPackages[af.Package] {
+			continue
+		}
+		seenPackages[af.Package] = true
+		if vaguePackages[af.Package] {
+			issues = append(issues, domain.Issue{
+				Severity:  domain.SeverityInfo,
+				Category:  "discoverability",
+				SubMetric: "naming_uniqueness",
+				File:      af.Path,
+				Message:   fmt.Sprintf("package %q is a vague name; consider a more descriptive name", af.Package),
+			})
+		}
+	}
+
+	// 7. Param name quality: flag exported functions where all params are single-letter
+	//    and param count >= 2.
+	for _, af := range analyzed {
+		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if !fn.Exported || len(fn.Params) < 2 {
+				continue
+			}
+			allSingleLetter := true
+			for _, p := range fn.Params {
+				if len(p.Name) != 1 {
+					allSingleLetter = false
+					break
+				}
+			}
+			if allSingleLetter {
+				issues = append(issues, domain.Issue{
+					Severity:  domain.SeverityInfo,
+					Category:  "discoverability",
+					SubMetric: "naming_uniqueness",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("exported function %q has %d single-letter parameters", fn.Name, len(fn.Params)),
+				})
 			}
 		}
 	}

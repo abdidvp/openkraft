@@ -22,6 +22,20 @@ func fileLayer(path string) string {
 	}
 }
 
+// importLayer returns the architectural layer of an import path.
+func importLayer(importPath string) string {
+	switch {
+	case strings.Contains(importPath, "/domain/"):
+		return "domain"
+	case strings.Contains(importPath, "/application/"):
+		return "application"
+	case isAdapterImport(importPath):
+		return "adapters"
+	default:
+		return "unknown"
+	}
+}
+
 // violatesDependencyDirection checks if an import from a given layer breaks
 // the inward dependency rule.
 func violatesDependencyDirection(layer, importPath string) bool {

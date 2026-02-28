@@ -6,14 +6,16 @@ import (
 	"unicode"
 
 	"github.com/fatih/camelcase"
+
+	"github.com/openkraft/openkraft/internal/domain"
 )
 
 // vagueWords are generic function name words that reduce discoverability.
 var vagueWords = map[string]bool{
-	"Handle":  true, "Process": true, "Data": true, "Run": true,
-	"Do":      true, "Execute": true, "Manage": true, "Util": true,
-	"Helper":  true, "Info": true, "Stuff": true, "Thing": true,
-	"Item":    true, "Object": true, "Temp": true,
+	"Handle": true, "Process": true, "Data": true, "Run": true,
+	"Do": true, "Execute": true, "Manage": true, "Util": true,
+	"Helper": true, "Info": true, "Stuff": true, "Thing": true,
+	"Item": true, "Object": true, "Temp": true,
 }
 
 // WordCountScore returns a score [0,1] based on the number of CamelCase words
@@ -42,8 +44,8 @@ func VocabularySpecificity(name string) float64 {
 	nonVague := 0
 	for _, w := range words {
 		// Capitalize first letter manually to avoid deprecated strings.Title.
-	low := strings.ToLower(w)
-	titled := strings.ToUpper(low[:1]) + low[1:]
+		low := strings.ToLower(w)
+		titled := strings.ToUpper(low[:1]) + low[1:]
 		if !vagueWords[titled] {
 			nonVague++
 		}
@@ -103,3 +105,115 @@ func WordCount(name string) int {
 	return len(camelcase.Split(name))
 }
 
+// genericWords score 0.0 — fully generic identifiers.
+var genericWords = map[string]bool{
+	"Get": true, "Set": true, "Do": true, "Run": true,
+	"Handle": true, "Process": true, "Execute": true, "Make": true,
+	"Data": true, "Info": true, "Item": true, "Object": true,
+	"Thing": true, "Stuff": true, "Temp": true, "Manager": true,
+	"Handler": true, "Helper": true, "Util": true,
+}
+
+// actionWords score 0.5 — verbs with clear semantics.
+var actionWords = map[string]bool{
+	"Validate": true, "Parse": true, "Format": true, "Convert": true,
+	"Transform": true, "Compute": true, "Calculate": true, "Build": true,
+	"Render": true,
+}
+
+// IdentifierSpecificity scores a function name based on word specificity.
+// Generic words = 0.0, action words = 0.5, domain vocab = 1.0, unknown = 0.75.
+func IdentifierSpecificity(name string, domainVocab map[string]bool) float64 {
+	words := camelcase.Split(name)
+	if len(words) == 0 {
+		return 0
+	}
+	var total float64
+	for _, w := range words {
+		titled := titleCase(w)
+		switch {
+		case genericWords[titled]:
+			total += 0.0
+		case actionWords[titled]:
+			total += 0.5
+		case domainVocab[titled]:
+			total += 1.0
+		default:
+			total += 0.75
+		}
+	}
+	return total / float64(len(words))
+}
+
+// ExtractDomainVocabulary builds a set of words found in struct and interface
+// names across the project, split by CamelCase boundaries.
+func ExtractDomainVocabulary(analyzed map[string]*domain.AnalyzedFile) map[string]bool {
+	vocab := make(map[string]bool)
+	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		for _, s := range af.Structs {
+			for _, w := range camelcase.Split(s) {
+				vocab[titleCase(w)] = true
+			}
+		}
+		for _, iface := range af.Interfaces {
+			for _, w := range camelcase.Split(iface) {
+				vocab[titleCase(w)] = true
+			}
+		}
+	}
+	return vocab
+}
+
+// SymbolCollisionRate returns the fraction of exported function names that
+// appear in 2+ packages. Generated files are excluded.
+func SymbolCollisionRate(analyzed map[string]*domain.AnalyzedFile) float64 {
+	// Group exported function names by package.
+	type nameInfo struct {
+		packages map[string]bool
+	}
+	names := make(map[string]*nameInfo)
+	totalNames := 0
+
+	for _, af := range analyzed {
+		if af.IsGenerated {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if !fn.Exported {
+				continue
+			}
+			totalNames++
+			ni, ok := names[fn.Name]
+			if !ok {
+				ni = &nameInfo{packages: make(map[string]bool)}
+				names[fn.Name] = ni
+			}
+			ni.packages[af.Package] = true
+		}
+	}
+
+	if totalNames == 0 {
+		return 0
+	}
+
+	collisions := 0
+	for _, ni := range names {
+		if len(ni.packages) >= 2 {
+			collisions++
+		}
+	}
+
+	return float64(collisions) / float64(len(names))
+}
+
+// titleCase returns a word with the first letter uppercased.
+func titleCase(w string) string {
+	if len(w) == 0 {
+		return w
+	}
+	low := strings.ToLower(w)
+	return strings.ToUpper(low[:1]) + low[1:]
+}
