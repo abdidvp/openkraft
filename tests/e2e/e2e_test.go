@@ -23,7 +23,7 @@ func TestMain(m *testing.M) {
 	defer os.RemoveAll(dir)
 
 	binaryPath = filepath.Join(dir, "openkraft")
-	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/openkraft")
+	cmd := exec.Command("go", "build", "-o", binaryPath, "../..")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("build failed: " + string(out))
 	}

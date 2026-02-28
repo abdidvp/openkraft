@@ -12,7 +12,7 @@ OpenKraft scores your Go codebase's AI-readiness and enforces that every module 
 ## Install
 
 ```bash
-go install github.com/abdidvp/openkraft/cmd/openkraft@latest
+go install github.com/abdidvp/openkraft@latest
 ```
 
 ## Quick Start
@@ -112,7 +112,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - run: go install github.com/abdidvp/openkraft/cmd/openkraft@latest
+      - run: go install github.com/abdidvp/openkraft@latest
       - run: openkraft score . --ci --min 70
 ```
 

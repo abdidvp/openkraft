@@ -35,7 +35,7 @@ Each category is a pure function in `internal/domain/scoring/`. Same input alway
 Hexagonal (Ports & Adapters). Dependencies flow inward only.
 
 ```
-cmd/openkraft/           Entry point
+main.go                  Entry point
 internal/
   domain/                Pure business logic, zero external deps
     scoring/             6 category scorers (pure functions)
@@ -125,12 +125,12 @@ openkraft mcp serve                 # MCP server for AI agents
 ## Development
 
 ```bash
-make build      # go build -o bin/openkraft ./cmd/openkraft
+make build      # go build -o bin/openkraft .
 make test       # go test ./... -race -count=1
 make lint       # golangci-lint run ./...
 
 # Benchmark against 10 popular Go repos
-go build -o openkraft ./cmd/openkraft
+go build -o openkraft .
 bash scripts/bench-repos.sh
 ```
 
