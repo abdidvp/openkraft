@@ -28,12 +28,12 @@ func TestHasVerbNounPattern_CommonGoVerbs(t *testing.T) {
 
 func TestHasVerbNounPattern_Rejects(t *testing.T) {
 	failing := []string{
-		"String",  // single CamelCase word
-		"Error",   // single word
-		"Len",     // single word
-		"",        // empty
-		"lower",   // unexported
-		"x",       // unexported single char
+		"String", // single CamelCase word
+		"Error",  // single word
+		"Len",    // single word
+		"",       // empty
+		"lower",  // unexported
+		"x",      // unexported single char
 	}
 	for _, name := range failing {
 		assert.False(t, scoring.HasVerbNounPattern(name), "%s should NOT match", name)
@@ -41,9 +41,9 @@ func TestHasVerbNounPattern_Rejects(t *testing.T) {
 }
 
 func TestWordCountScore(t *testing.T) {
-	assert.Equal(t, 1.0, scoring.WordCountScore("CreateUser"))      // 2 words
-	assert.Equal(t, 1.0, scoring.WordCountScore("ScoreCodeHealth")) // 3 words
-	assert.Equal(t, 0.5, scoring.WordCountScore("Score"))           // 1 word
+	assert.Equal(t, 1.0, scoring.WordCountScore("CreateUser"))               // 2 words
+	assert.Equal(t, 1.0, scoring.WordCountScore("ScoreCodeHealth"))          // 3 words
+	assert.Equal(t, 0.5, scoring.WordCountScore("Score"))                    // 1 word
 	assert.Equal(t, 0.7, scoring.WordCountScore("VeryLongFunctionNameHere")) // 5 words
 }
 

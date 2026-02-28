@@ -175,7 +175,7 @@ func scoreConsistentPatterns(_ []domain.DetectedModule, analyzed map[string]*dom
 	type signature struct {
 		paramCount  int
 		returnCount int
-		hasContext   bool
+		hasContext  bool
 		hasError    bool
 	}
 

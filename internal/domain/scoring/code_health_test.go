@@ -131,11 +131,11 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			analyzed:    map[string]*domain.AnalyzedFile{},
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":          "no functions to evaluate",
-				"file_size":              "no files to evaluate",
-				"cognitive_complexity":   "no functions to evaluate",
-				"parameter_count":        "no functions to evaluate",
-				"code_duplication":       "no duplication detected",
+				"function_size":        "no functions to evaluate",
+				"file_size":            "no files to evaluate",
+				"cognitive_complexity": "no functions to evaluate",
+				"parameter_count":      "no functions to evaluate",
+				"code_duplication":     "no duplication detected",
 			},
 		},
 		{
@@ -143,11 +143,11 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			analyzed:    nil,
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":          "no functions to evaluate",
-				"file_size":              "no files to evaluate",
-				"cognitive_complexity":   "no functions to evaluate",
-				"parameter_count":        "no functions to evaluate",
-				"code_duplication":       "no duplication detected",
+				"function_size":        "no functions to evaluate",
+				"file_size":            "no files to evaluate",
+				"cognitive_complexity": "no functions to evaluate",
+				"parameter_count":      "no functions to evaluate",
+				"code_duplication":     "no duplication detected",
 			},
 		},
 		{
@@ -157,10 +157,10 @@ func TestScoreCodeHealth_ZeroFunctionsGetFullCredit(t *testing.T) {
 			),
 			expectScore: 100,
 			expectDetails: map[string]string{
-				"function_size":          "no functions to evaluate",
-				"cognitive_complexity":   "no functions to evaluate",
-				"parameter_count":        "no functions to evaluate",
-				"code_duplication":       "no duplication detected",
+				"function_size":        "no functions to evaluate",
+				"cognitive_complexity": "no functions to evaluate",
+				"parameter_count":      "no functions to evaluate",
+				"code_duplication":     "no duplication detected",
 			},
 		},
 	}
@@ -326,9 +326,9 @@ func TestScoreCodeHealth_SeverityTiering(t *testing.T) {
 	//   actual/threshold >= 1.5 → warning
 	//   else                    → info
 	tests := []struct {
-		name     string
-		params   int
-		wantSev  string
+		name      string
+		params    int
+		wantSev   string
 		ratioDesc string
 	}{
 		// 69 params / 4 threshold = 17.25x → error
@@ -395,8 +395,8 @@ func TestScoreCodeHealth_SeverityMixInSameResult(t *testing.T) {
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("mixed.go", 900, // file_size: 900/300 = 3x → error
 			makeFunction("Extreme", 20, 69, 1, 0), // params: 69/4 = 17.25x → error
-			makeFunction("Moderate", 20, 8, 1, 0),  // params: 8/4 = 2.0x → warning
-			makeFunction("Slight", 20, 5, 1, 0),    // params: 5/4 = 1.25x → info
+			makeFunction("Moderate", 20, 8, 1, 0), // params: 8/4 = 2.0x → warning
+			makeFunction("Slight", 20, 5, 1, 0),   // params: 5/4 = 1.25x → info
 		),
 	))
 
@@ -561,10 +561,10 @@ func TestScoreCodeHealth_PatternFieldPopulated(t *testing.T) {
 	// Reconstruct → "reconstruct", New → "constructor", Test → "test", other → ""
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("service.go", 100,
-			makeFunction("ReconstructOrder", 200, 2, 1, 0),  // function_size issue, pattern=reconstruct
-			makeFunction("NewService", 200, 2, 1, 0),        // function_size issue, pattern=constructor
-			makeFunction("TestSomething", 200, 2, 1, 0),     // function_size issue, pattern=test
-			makeFunction("ProcessPayment", 200, 2, 1, 0),    // function_size issue, pattern=""
+			makeFunction("ReconstructOrder", 200, 2, 1, 0), // function_size issue, pattern=reconstruct
+			makeFunction("NewService", 200, 2, 1, 0),       // function_size issue, pattern=constructor
+			makeFunction("TestSomething", 200, 2, 1, 0),    // function_size issue, pattern=test
+			makeFunction("ProcessPayment", 200, 2, 1, 0),   // function_size issue, pattern=""
 		),
 	))
 
@@ -1167,9 +1167,9 @@ func TestScoreCodeHealth_NoSilentZone(t *testing.T) {
 	// Functions at 51-100 lines lose score (partial credit) and should now generate issues.
 	result := scoring.ScoreCodeHealth(defaultProfile(), nil, analyzed(
 		makeFile("mixed.go", 200,
-			makeFunction("Clean", 50, 2, 1, 0),    // full credit, no issue
-			makeFunction("Partial", 75, 2, 1, 0),  // partial credit, should have issue
-			makeFunction("Zero", 150, 2, 1, 0),    // zero credit, should have issue
+			makeFunction("Clean", 50, 2, 1, 0),   // full credit, no issue
+			makeFunction("Partial", 75, 2, 1, 0), // partial credit, should have issue
+			makeFunction("Zero", 150, 2, 1, 0),   // zero credit, should have issue
 		),
 	))
 
@@ -1301,8 +1301,8 @@ func makeDataHeavyTestFunc(name string, lines int) domain.Function {
 		LineStart:  1,
 		LineEnd:    lines,
 		Params:     make([]domain.Param, 0),
-		MaxNesting: 2,  // standard pattern: for range { t.Run { if
-		MaxCondOps: 0,  // no conditional operators
+		MaxNesting: 2, // standard pattern: for range { t.Run { if
+		MaxCondOps: 0, // no conditional operators
 	}
 }
 
