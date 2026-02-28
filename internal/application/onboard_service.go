@@ -134,7 +134,7 @@ func (s *OnboardService) RenderContract(report *domain.OnboardReport) string {
 	}
 	tmpl := template.Must(template.New("contract").Funcs(funcMap).Parse(contractTemplate))
 	var buf bytes.Buffer
-	tmpl.Execute(&buf, report)
+	_ = tmpl.Execute(&buf, report)
 	return buf.String()
 }
 

@@ -30,8 +30,8 @@ func TestValidate_FirstCallCreatesCache(t *testing.T) {
 	fixturePath := "../../testdata/go-hexagonal/perfect"
 
 	// Clean up any leftover cache
-	cache.New().Invalidate(fixturePath)
-	defer cache.New().Invalidate(fixturePath)
+	_ = cache.New().Invalidate(fixturePath)
+	defer func() { _ = cache.New().Invalidate(fixturePath) }()
 
 	result, err := svc.Validate(fixturePath, []string{"internal/tax/domain/tax_rule.go"}, nil, nil, false)
 	require.NoError(t, err)
@@ -44,8 +44,8 @@ func TestValidate_StrictMode(t *testing.T) {
 	svc := newValidateService()
 	fixturePath := "../../testdata/go-hexagonal/incomplete"
 
-	cache.New().Invalidate(fixturePath)
-	defer cache.New().Invalidate(fixturePath)
+	_ = cache.New().Invalidate(fixturePath)
+	defer func() { _ = cache.New().Invalidate(fixturePath) }()
 
 	result, err := svc.Validate(fixturePath, []string{"internal/shipping/application/shipping_service.go"}, nil, nil, true)
 	require.NoError(t, err)

@@ -96,8 +96,8 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 
 	// Step 3: Validate
 	// Clean cache first
-	cacheAdapter.New().Invalidate(perfectFixture)
-	defer cacheAdapter.New().Invalidate(perfectFixture)
+	_ = cacheAdapter.New().Invalidate(perfectFixture)
+	defer func() { _ = cacheAdapter.New().Invalidate(perfectFixture) }()
 
 	result, err := validateSvc.Validate(perfectFixture,
 		[]string{"internal/tax/domain/tax_rule.go"}, nil, nil, false)

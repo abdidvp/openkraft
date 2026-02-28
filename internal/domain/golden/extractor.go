@@ -68,9 +68,7 @@ func ExtractBlueprint(module domain.DetectedModule, analyzed map[string]*domain.
 	}
 
 	// Collect patterns from layers
-	for _, layer := range module.Layers {
-		bp.Patterns = append(bp.Patterns, layer)
-	}
+	bp.Patterns = append(bp.Patterns, module.Layers...)
 
 	return bp, nil
 }
