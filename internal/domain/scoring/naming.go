@@ -97,3 +97,9 @@ func hasVerbNounPattern(name string) bool {
 
 // HasVerbNounPattern exports hasVerbNounPattern for testing.
 var HasVerbNounPattern = hasVerbNounPattern
+
+// WordCount returns the number of CamelCase words in a name.
+func WordCount(name string) int {
+	return len(camelcase.Split(name))
+}
+

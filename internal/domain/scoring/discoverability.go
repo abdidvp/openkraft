@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 
@@ -17,8 +18,8 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 	}
 
 	sm1 := scoreNamingUniqueness(analyzed)
-	sm2 := scoreFileNamingConventions(profile, scan)
-	sm3 := scorePredictableStructure(profile, modules, scan)
+	sm2 := scoreFileNamingConventions(profile, scan, analyzed)
+	sm3 := scorePredictableStructure(profile, modules, scan, analyzed)
 	sm4 := scoreDiscoverabilityDependencyDirection(modules, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
@@ -29,7 +30,7 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 	}
 	cat.Score = total
 
-	cat.Issues = collectDiscoverabilityIssues(modules, scan, analyzed)
+	cat.Issues = collectDiscoverabilityIssues(profile, modules, scan, analyzed)
 	return cat
 }
 
@@ -40,6 +41,7 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 	var names []string
 	var totalWCS, totalVS float64
 	count := 0
+	descriptive := 0
 
 	for _, af := range analyzed {
 		for _, fn := range af.Functions {
@@ -47,9 +49,13 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 				continue
 			}
 			names = append(names, fn.Name)
-			totalWCS += WordCountScore(fn.Name)
+			wcs := WordCountScore(fn.Name)
+			totalWCS += wcs
 			totalVS += VocabularySpecificity(fn.Name)
 			count++
+			if wcs >= 0.7 {
+				descriptive++
+			}
 		}
 	}
 
@@ -63,19 +69,16 @@ func scoreNamingUniqueness(analyzed map[string]*domain.AnalyzedFile) domain.SubM
 	entropy := ShannonEntropy(names)
 
 	composite := avgWCS*0.4 + avgVS*0.3 + entropy*0.3
-	sm.Score = int(composite * float64(sm.Points))
-	if sm.Score > sm.Points {
-		sm.Score = sm.Points
-	}
-	sm.Detail = fmt.Sprintf("word count=%.2f, specificity=%.2f, entropy=%.2f across %d exported functions",
-		avgWCS, avgVS, entropy, count)
+	sm.Score = min(int(math.Round(composite*float64(sm.Points))), sm.Points)
+	sm.Detail = fmt.Sprintf("%d of %d exported functions have descriptive names (2+ words)",
+		descriptive, count)
 	return sm
 }
 
 // scoreFileNamingConventions (25 pts): measures internal naming consistency.
 // Respects profile.NamingConvention: "bare" or "suffixed" enforces that pattern;
 // "auto" (default) detects the dominant pattern and scores consistency.
-func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.ScanResult) domain.SubMetric {
+func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "file_naming_conventions", Points: 25}
 
 	if scan == nil || len(scan.GoFiles) == 0 {
@@ -83,64 +86,27 @@ func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.Sca
 		return sm
 	}
 
-	// Classify non-test, non-main Go files as "bare" or "suffixed".
-	bare, suffixed, total := 0, 0, 0
-	for _, f := range scan.GoFiles {
-		base := filepath.Base(f)
-		if strings.HasSuffix(base, "_test.go") {
-			continue
-		}
-		name := strings.TrimSuffix(base, ".go")
-		if name == "main" || name == "doc" {
-			continue
-		}
-		total++
-		if strings.Contains(name, "_") {
-			suffixed++
-		} else {
-			bare++
-		}
-	}
-
-	if total == 0 {
+	c := classifyFileNaming(profile, scan.GoFiles, analyzed)
+	if c.total == 0 {
 		sm.Detail = "no scorable files"
 		return sm
 	}
 
-	// Determine expected pattern from profile.
-	convention := profile.NamingConvention
-	var dominant int
-	var patternName string
-
-	switch convention {
-	case "bare":
-		dominant = bare
-		patternName = "bare"
-	case "suffixed":
-		dominant = suffixed
+	consistency := c.consistency
+	patternName := "bare"
+	if c.dominantIsSuffixed {
 		patternName = "suffixed"
-	default: // "auto" or empty — detect dominant pattern.
-		if suffixed > bare {
-			dominant = suffixed
-			patternName = "suffixed"
-		} else {
-			dominant = bare
-			patternName = "bare"
-		}
+		consistency = (c.consistency + suffixReuse(scan.GoFiles)) / 2.0
 	}
 
-	consistency := float64(dominant) / float64(total)
-
-	// Bonus for suffix reuse among suffixed files.
+	sm.Score = min(int(math.Round(consistency*float64(sm.Points))), sm.Points)
 	if patternName == "suffixed" {
-		consistency = (consistency + suffixReuse(scan.GoFiles)) / 2.0
+		sm.Detail = fmt.Sprintf("%d/%d files follow suffixed pattern (%.0f%% raw, %.0f%% with suffix reuse)",
+			c.dominantCount, c.total, c.consistency*100, consistency*100)
+	} else {
+		sm.Detail = fmt.Sprintf("%d/%d files follow bare pattern (%.0f%%)",
+			c.dominantCount, c.total, c.consistency*100)
 	}
-
-	sm.Score = int(consistency * float64(sm.Points))
-	if sm.Score > sm.Points {
-		sm.Score = sm.Points
-	}
-	sm.Detail = fmt.Sprintf("%d/%d files follow %s pattern (%.0f%%)", dominant, total, patternName, consistency*100)
 	return sm
 }
 
@@ -176,7 +142,7 @@ func suffixReuse(goFiles []string) float64 {
 //   - Suffix Jaccard (30%): Jaccard of role-indicating file suffixes across modules.
 //     When naming convention is "bare", suffix Jaccard is replaced with full credit.
 //   - File count similarity (20%): min(a,b)/max(a,b) averaged across pairs.
-func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult) domain.SubMetric {
+func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "predictable_structure", Points: 25}
 
 	if len(modules) <= 1 {
@@ -189,33 +155,13 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 		return sm
 	}
 
-	// Detect naming convention: explicit from profile, or auto-detect from scan.
+	// Detect naming convention via shared classifier.
 	isBareNaming := false
-	switch profile.NamingConvention {
-	case "bare":
+	if scan != nil {
+		c := classifyFileNaming(profile, scan.GoFiles, analyzed)
+		isBareNaming = !c.dominantIsSuffixed
+	} else if profile.NamingConvention == "bare" {
 		isBareNaming = true
-	case "suffixed":
-		isBareNaming = false
-	default: // "auto" — detect from scan
-		if scan != nil {
-			bare, suffixed := 0, 0
-			for _, f := range scan.GoFiles {
-				base := filepath.Base(f)
-				if strings.HasSuffix(base, "_test.go") {
-					continue
-				}
-				name := strings.TrimSuffix(base, ".go")
-				if name == "main" || name == "doc" {
-					continue
-				}
-				if strings.Contains(name, "_") {
-					suffixed++
-				} else {
-					bare++
-				}
-			}
-			isBareNaming = bare > suffixed
-		}
 	}
 
 	// Build per-module layer sets, suffix sets, and file counts.
@@ -239,9 +185,13 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 			}
 			nonTestFiles++
 			if idx := strings.LastIndex(name, "_"); idx >= 0 {
-				suffixSets[i][name[idx:]] = true
-			} else {
-				suffixSets[i][name] = true
+				suffix := name[idx:]
+				for _, expected := range profile.ExpectedFileSuffixes {
+					if suffix == expected {
+						suffixSets[i][suffix] = true
+						break
+					}
+				}
 			}
 		}
 		fileCounts[i] = nonTestFiles
@@ -288,16 +238,13 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 	avgFileCount := totalFileCount / float64(pairs)
 
 	composite := avgLayer*0.5 + avgSuffix*0.3 + avgFileCount*0.2
-	sm.Score = int(composite * float64(sm.Points))
-	if sm.Score > sm.Points {
-		sm.Score = sm.Points
-	}
+	sm.Score = min(int(math.Round(composite*float64(sm.Points))), sm.Points)
 	suffixLabel := fmt.Sprintf("suffixes=%.0f%%", avgSuffix*100)
 	if isBareNaming {
 		suffixLabel = "naming=bare(ok)"
 	}
-	sm.Detail = fmt.Sprintf("layers=%.0f%%, %s, file-count=%.0f%% across %d modules",
-		avgLayer*100, suffixLabel, avgFileCount*100, len(modules))
+	sm.Detail = fmt.Sprintf("layers=%.0f%%, %s, file-count=%.0f%% across %d module pairs",
+		avgLayer*100, suffixLabel, avgFileCount*100, pairs)
 	return sm
 }
 
@@ -376,10 +323,107 @@ func jaccard(a, b map[string]bool) float64 {
 	return float64(intersection) / float64(len(union))
 }
 
-func collectDiscoverabilityIssues(modules []domain.DetectedModule, _ *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
+func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
 	var issues []domain.Issue
 
-	// Flag dependency violations (production code only).
+	// 1. naming_uniqueness: flag exported single-word functions (WCS < 0.7).
+	//    Skip: generated files, test files, Go interface methods, methods with receiver + single word.
+	for _, af := range analyzed {
+		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
+			continue
+		}
+		for _, fn := range af.Functions {
+			if !fn.Exported {
+				continue
+			}
+			if fn.Receiver != "" && WordCount(fn.Name) == 1 {
+				// Methods with a receiver provide context through the type name
+				// (e.g., (*User).String(), (*Repo).Close()) — works for any
+				// interface in any project, no hardcoded exemption list needed.
+				continue
+			}
+			if WordCountScore(fn.Name) < 0.7 {
+				issues = append(issues, domain.Issue{
+					Severity:  domain.SeverityInfo,
+					Category:  "discoverability",
+					SubMetric: "naming_uniqueness",
+					File:      af.Path,
+					Line:      fn.LineStart,
+					Message:   fmt.Sprintf("exported function %q has a single-word name; consider a verb+noun pattern", fn.Name),
+				})
+			}
+		}
+	}
+
+	// 2. file_naming_conventions: flag files violating dominant pattern.
+	//    Only when dominant pattern has ≥60% consistency to avoid FP on 50/50 splits.
+	//    Skips generated files via classifyFileNaming.
+	if scan != nil && len(scan.GoFiles) > 0 {
+		c := classifyFileNaming(profile, scan.GoFiles, analyzed)
+		if c.total > 0 && c.consistency >= 0.60 {
+			for _, f := range scan.GoFiles {
+				base := filepath.Base(f)
+				if strings.HasSuffix(base, "_test.go") {
+					continue
+				}
+				name := strings.TrimSuffix(base, ".go")
+				if name == "main" || name == "doc" {
+					continue
+				}
+				if af, ok := analyzed[f]; ok && af.IsGenerated {
+					continue
+				}
+				isSuffixed := strings.Contains(name, "_")
+				if c.dominantIsSuffixed && !isSuffixed {
+					issues = append(issues, domain.Issue{
+						Severity:  domain.SeverityInfo,
+						Category:  "discoverability",
+						SubMetric: "file_naming_conventions",
+						File:      f,
+						Message:   fmt.Sprintf("file %q uses bare naming but project uses suffixed pattern", base),
+					})
+				} else if !c.dominantIsSuffixed && isSuffixed {
+					issues = append(issues, domain.Issue{
+						Severity:  domain.SeverityInfo,
+						Category:  "discoverability",
+						SubMetric: "file_naming_conventions",
+						File:      f,
+						Message:   fmt.Sprintf("file %q uses suffixed naming but project uses bare pattern", base),
+					})
+				}
+			}
+		}
+	}
+
+	// 3. predictable_structure: flag modules missing layers that >50% of peers have.
+	if len(modules) > 1 {
+		layerCount := map[string]int{}
+		for _, m := range modules {
+			for _, l := range m.Layers {
+				layerCount[l]++
+			}
+		}
+		threshold := len(modules) / 2
+		for _, m := range modules {
+			has := map[string]bool{}
+			for _, l := range m.Layers {
+				has[l] = true
+			}
+			for layer, count := range layerCount {
+				if count > threshold && !has[layer] {
+					issues = append(issues, domain.Issue{
+						Severity:  domain.SeverityInfo,
+						Category:  "discoverability",
+						SubMetric: "predictable_structure",
+						File:      m.Path,
+						Message:   fmt.Sprintf("module %q is missing %q layer that %d/%d peers have", m.Name, layer, count, len(modules)),
+					})
+				}
+			}
+		}
+	}
+
+	// 4. dependency_direction: flag import violations (production code only).
 	for _, m := range modules {
 		for _, f := range m.Files {
 			if strings.HasSuffix(f, "_test.go") {
@@ -393,10 +437,11 @@ func collectDiscoverabilityIssues(modules []domain.DetectedModule, _ *domain.Sca
 			for _, imp := range af.Imports {
 				if violatesDependencyDirection(layer, imp) {
 					issues = append(issues, domain.Issue{
-						Severity: domain.SeverityError,
-						Category: "discoverability",
-						File:     f,
-						Message:  fmt.Sprintf("%s layer imports %s (dependency direction violation)", layer, imp),
+						Severity:  domain.SeverityError,
+						Category:  "discoverability",
+						SubMetric: "dependency_direction",
+						File:      f,
+						Message:   fmt.Sprintf("%s layer imports %s (dependency direction violation)", layer, imp),
 					})
 				}
 			}
@@ -404,6 +449,62 @@ func collectDiscoverabilityIssues(modules []domain.DetectedModule, _ *domain.Sca
 	}
 
 	return issues
+}
+
+// fileClassification holds the result of classifying Go files by naming convention.
+type fileClassification struct {
+	bare, suffixed, total int
+	dominantIsSuffixed    bool
+	dominantCount         int
+	consistency           float64
+}
+
+// classifyFileNaming classifies Go source files as bare or suffixed and determines
+// the dominant convention. Skips test files, main.go, doc.go, and generated files.
+func classifyFileNaming(profile *domain.ScoringProfile, goFiles []string, analyzed map[string]*domain.AnalyzedFile) fileClassification {
+	var c fileClassification
+	for _, f := range goFiles {
+		base := filepath.Base(f)
+		if strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		name := strings.TrimSuffix(base, ".go")
+		if name == "main" || name == "doc" {
+			continue
+		}
+		if af, ok := analyzed[f]; ok && af.IsGenerated {
+			continue
+		}
+		c.total++
+		if strings.Contains(name, "_") {
+			c.suffixed++
+		} else {
+			c.bare++
+		}
+	}
+
+	if c.total == 0 {
+		return c
+	}
+
+	switch profile.NamingConvention {
+	case "bare":
+		c.dominantIsSuffixed = false
+		c.dominantCount = c.bare
+	case "suffixed":
+		c.dominantIsSuffixed = true
+		c.dominantCount = c.suffixed
+	default:
+		if c.suffixed > c.bare {
+			c.dominantIsSuffixed = true
+			c.dominantCount = c.suffixed
+		} else {
+			c.dominantIsSuffixed = false
+			c.dominantCount = c.bare
+		}
+	}
+	c.consistency = float64(c.dominantCount) / float64(c.total)
+	return c
 }
 
 // sharesLayer returns true if the two layer sets have at least one layer in common.
