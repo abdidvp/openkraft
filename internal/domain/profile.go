@@ -11,10 +11,10 @@ type ScoringProfile struct {
 	NamingConvention     string // "auto", "bare", "suffixed"
 
 	// Code Health
-	MaxFunctionLines  int
-	MaxFileLines      int
-	MaxNestingDepth   int
-	MaxParameters     int
+	MaxFunctionLines       int
+	MaxFileLines           int
+	MaxNestingDepth        int
+	MaxParameters          int
 	MaxConditionalOps      int
 	MaxCognitiveComplexity int
 	MaxDuplicationPercent  int
@@ -24,8 +24,8 @@ type ScoringProfile struct {
 	// Template function detection: functions whose body is dominated by
 	// string literals (e.g., shell completion scripts) receive relaxed
 	// size thresholds to avoid false positives.
-	StringLiteralThreshold    float64 // ratio above which a function is "template" (default 0.8)
-	TemplateFuncSizeMultiplier int    // size limit multiplier for template functions (default 5)
+	StringLiteralThreshold     float64 // ratio above which a function is "template" (default 0.8)
+	TemplateFuncSizeMultiplier int     // size limit multiplier for template functions (default 5)
 
 	// CGo/FFI: files with import "C" get a relaxed parameter threshold
 	// since wrapper functions must match C API signatures.
@@ -36,6 +36,13 @@ type ScoringProfile struct {
 
 	// Verifiability
 	MinTestRatio float64
+
+	// Discoverability
+	MinNamingWordScore         float64    // WCS threshold for "descriptive" (default: 0.7)
+	NamingConsistencyThreshold float64    // min dominant % to flag violations (default: 0.60)
+	NamingCompositeWeights     [3]float64 // WCS, specificity, entropy weights (default: {0.30, 0.30, 0.25})
+	CollisionWeight            float64    // weight for collision rate signal (default: 0.15)
+	StructureCompositeWeights  [3]float64 // layers, suffix, filecount weights (default: {0.5, 0.3, 0.2})
 
 	// Predictability
 	MaxGlobalVarPenalty int
@@ -64,11 +71,11 @@ func DefaultProfile() ScoringProfile {
 			"_model", "_service", "_handler", "_repository",
 			"_ports", "_errors", "_routes", "_rule",
 		},
-		NamingConvention: "auto",
-		MaxFunctionLines: 50,
-		MaxFileLines:     300,
-		MaxNestingDepth:  3,
-		MaxParameters:    4,
+		NamingConvention:           "auto",
+		MaxFunctionLines:           50,
+		MaxFileLines:               300,
+		MaxNestingDepth:            3,
+		MaxParameters:              4,
 		MaxConditionalOps:          2,
 		MaxCognitiveComplexity:     25,
 		MaxDuplicationPercent:      15,
@@ -76,15 +83,20 @@ func DefaultProfile() ScoringProfile {
 		ExemptParamPatterns:        []string{"Reconstruct"},
 		StringLiteralThreshold:     0.8,
 		TemplateFuncSizeMultiplier: 5,
-		CGoParamThreshold:         12,
+		CGoParamThreshold:          12,
 		ContextFiles: []ContextFileSpec{
 			{Name: "CLAUDE.md", Points: 10, MinSize: 500},
 			{Name: "AGENTS.md", Points: 8},
 			{Name: ".cursorrules", Points: 7, MinSize: 200},
 			{Name: ".github/copilot-instructions.md", Points: 5},
 		},
-		MinTestRatio:        0.5,
-		MaxGlobalVarPenalty: 3,
+		MinTestRatio:               0.5,
+		MinNamingWordScore:         0.7,
+		NamingConsistencyThreshold: 0.60,
+		NamingCompositeWeights:     [3]float64{0.30, 0.30, 0.25},
+		CollisionWeight:            0.15,
+		StructureCompositeWeights:  [3]float64{0.5, 0.3, 0.2},
+		MaxGlobalVarPenalty:        3,
 	}
 }
 
