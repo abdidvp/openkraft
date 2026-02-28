@@ -20,6 +20,9 @@ func TestDefaultProfile_AllFieldsPopulated(t *testing.T) {
 	assert.Greater(t, p.MaxNestingDepth, 0, "MaxNestingDepth")
 	assert.Greater(t, p.MaxParameters, 0, "MaxParameters")
 	assert.Greater(t, p.MaxConditionalOps, 0, "MaxConditionalOps")
+	assert.Greater(t, p.MaxCognitiveComplexity, 0, "MaxCognitiveComplexity")
+	assert.Greater(t, p.MaxDuplicationPercent, 0, "MaxDuplicationPercent")
+	assert.Greater(t, p.MinCloneTokens, 0, "MinCloneTokens")
 	assert.NotEmpty(t, p.ContextFiles, "ContextFiles")
 	assert.Greater(t, p.MinTestRatio, 0.0, "MinTestRatio")
 	assert.Greater(t, p.MaxGlobalVarPenalty, 0, "MaxGlobalVarPenalty")
@@ -61,6 +64,7 @@ func TestDefaultProfileForType_Library(t *testing.T) {
 	assert.Equal(t, 40, p.MaxFunctionLines)
 	assert.Equal(t, 250, p.MaxFileLines)
 	assert.Equal(t, 3, p.MaxParameters)
+	assert.Equal(t, 20, p.MaxCognitiveComplexity, "Library should have stricter CC threshold")
 	assert.Equal(t, 0.8, p.MinTestRatio)
 }
 

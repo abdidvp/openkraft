@@ -15,8 +15,11 @@ type ScoringProfile struct {
 	MaxFileLines      int
 	MaxNestingDepth   int
 	MaxParameters     int
-	MaxConditionalOps    int
-	ExemptParamPatterns  []string
+	MaxConditionalOps      int
+	MaxCognitiveComplexity int
+	MaxDuplicationPercent  int
+	MinCloneTokens         int
+	ExemptParamPatterns    []string
 
 	// Template function detection: functions whose body is dominated by
 	// string literals (e.g., shell completion scripts) receive relaxed
@@ -67,6 +70,9 @@ func DefaultProfile() ScoringProfile {
 		MaxNestingDepth:  3,
 		MaxParameters:    4,
 		MaxConditionalOps:          2,
+		MaxCognitiveComplexity:     25,
+		MaxDuplicationPercent:      15,
+		MinCloneTokens:             75,
 		ExemptParamPatterns:        []string{"Reconstruct"},
 		StringLiteralThreshold:     0.8,
 		TemplateFuncSizeMultiplier: 5,
@@ -103,6 +109,7 @@ func DefaultProfileForType(pt ProjectType) ScoringProfile {
 		p.MaxFunctionLines = 40
 		p.MaxFileLines = 250
 		p.MaxParameters = 3
+		p.MaxCognitiveComplexity = 20
 		p.MinTestRatio = 0.8
 		p.ContextFiles = []ContextFileSpec{
 			{Name: "CLAUDE.md", Points: 12, MinSize: 500},

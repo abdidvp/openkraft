@@ -118,8 +118,9 @@ type AnalyzedFile struct {
 	GlobalVars     []string     `json:"global_vars,omitempty"`
 	ErrorCalls     []ErrorCall  `json:"error_calls,omitempty"`
 	TypeAssertions []TypeAssert `json:"type_assertions,omitempty"`
-	TotalLines     int          `json:"total_lines,omitempty"`
-	IsGenerated    bool         `json:"is_generated,omitempty"`
+	TotalLines       int          `json:"total_lines,omitempty"`
+	NormalizedTokens []int        `json:"-"`
+	IsGenerated      bool         `json:"is_generated,omitempty"`
 	HasCGoImport   bool         `json:"has_cgo_import,omitempty"`
 }
 
@@ -133,8 +134,9 @@ type Function struct {
 	Params             []Param  `json:"params,omitempty"`
 	Returns            []string `json:"returns,omitempty"`
 	MaxNesting         int      `json:"max_nesting"`
-	MaxCondOps         int      `json:"max_cond_ops"`
-	StringLiteralRatio float64  `json:"string_literal_ratio,omitempty"`
+	MaxCondOps          int      `json:"max_cond_ops"`
+	CognitiveComplexity int      `json:"cognitive_complexity,omitempty"`
+	StringLiteralRatio  float64  `json:"string_literal_ratio,omitempty"`
 	MaxCaseArms        int      `json:"max_case_arms,omitempty"`
 	AvgCaseLines       float64  `json:"avg_case_lines,omitempty"`
 }

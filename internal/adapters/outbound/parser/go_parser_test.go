@@ -342,6 +342,304 @@ func Alloc(size int) unsafe.Pointer {
 	assert.True(t, result.HasCGoImport, "file with import \"C\" should set HasCGoImport")
 }
 
+// ---------------------------------------------------------------------------
+// Cognitive complexity
+// ---------------------------------------------------------------------------
+
+func TestGoParser_CognitiveComplexity(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		wantCC int
+	}{
+		{
+			name: "no control flow",
+			source: `package cc
+func Simple() int { return 1 }
+`,
+			wantCC: 0,
+		},
+		{
+			name: "single if",
+			source: `package cc
+func F(x int) int {
+	if x > 0 { return x }
+	return 0
+}
+`,
+			wantCC: 1,
+		},
+		{
+			name: "if-else",
+			source: `package cc
+func F(x int) int {
+	if x > 0 {
+		return x
+	} else {
+		return 0
+	}
+}
+`,
+			wantCC: 2, // if=+1, else=+1
+		},
+		{
+			name: "if-elseif-else",
+			source: `package cc
+func F(x int) int {
+	if x > 0 {
+		return 1
+	} else if x < 0 {
+		return -1
+	} else {
+		return 0
+	}
+}
+`,
+			wantCC: 3, // if=+1, else-if=+1, else=+1
+		},
+		{
+			name: "nested if in for",
+			source: `package cc
+func F(xs []int) int {
+	for _, x := range xs {
+		if x > 0 {
+			return x
+		}
+	}
+	return 0
+}
+`,
+			wantCC: 3, // for=+1(+0 nesting), if=+1(+1 nesting)
+		},
+		{
+			name: "deep nesting",
+			source: `package cc
+func F(xs []int) int {
+	for _, x := range xs {
+		if x > 0 {
+			if x > 10 {
+				return x
+			}
+		}
+	}
+	return 0
+}
+`,
+			wantCC: 6, // for=+1, if=+1+1, if=+1+2 = 6
+		},
+		{
+			name: "boolean sequence same operator",
+			source: `package cc
+func F(a, b, c bool) bool {
+	if a && b && c {
+		return true
+	}
+	return false
+}
+`,
+			wantCC: 2, // if=+1, a&&b&&c = 1 sequence
+		},
+		{
+			name: "boolean sequence mixed operators",
+			source: `package cc
+func F(a, b, c bool) bool {
+	if a && b || c {
+		return true
+	}
+	return false
+}
+`,
+			wantCC: 3, // if=+1, &&=+1, ||=+1 (transition)
+		},
+		{
+			name: "goto",
+			source: `package cc
+func F() {
+	goto end
+end:
+}
+`,
+			wantCC: 1, // goto=+1
+		},
+		{
+			name: "labeled break",
+			source: `package cc
+func F() {
+outer:
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			break outer
+		}
+	}
+}
+`,
+			wantCC: 4, // for=+1, for=+1+1, labeled break=+1
+		},
+		{
+			name: "closure increases nesting",
+			source: `package cc
+func F() {
+	fn := func() {
+		if true {
+		}
+	}
+	_ = fn
+}
+`,
+			wantCC: 2, // closure nesting=1, if=+1(+1 nesting)
+		},
+		{
+			name: "select statement",
+			source: `package cc
+func F(ch1, ch2 chan int) {
+	select {
+	case <-ch1:
+	case <-ch2:
+	}
+}
+`,
+			wantCC: 1, // select=+1
+		},
+		{
+			name: "type switch",
+			source: `package cc
+func F(v interface{}) {
+	switch v.(type) {
+	case int:
+	case string:
+	}
+}
+`,
+			wantCC: 1, // type switch=+1
+		},
+		{
+			name: "nested select in for",
+			source: `package cc
+func F(ch chan int) {
+	for {
+		select {
+		case <-ch:
+			if true {}
+		}
+	}
+}
+`,
+			wantCC: 6, // for=+1(nest0), select=+1+1(nest1), if=+1+2(nest2) = 1+2+3
+		},
+		{
+			name: "for with boolean condition",
+			source: `package cc
+func F(a, b, c bool) {
+	for a && b || c {
+	}
+}
+`,
+			wantCC: 3, // for=+1, &&=+1, ||=+1 (mixed operators)
+		},
+		{
+			name: "defer with func literal",
+			source: `package cc
+func F() {
+	defer func() {
+		if true {}
+	}()
+}
+`,
+			wantCC: 2, // closure nesting=1, if=+1(+1 nesting)
+		},
+	}
+
+	p := parser.New()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeGoFile(t, dir, "cc.go", tt.source)
+
+			result, err := p.AnalyzeFile(path)
+			require.NoError(t, err)
+			require.NotEmpty(t, result.Functions)
+
+			fn := result.Functions[0]
+			assert.Equal(t, tt.wantCC, fn.CognitiveComplexity,
+				"CognitiveComplexity mismatch for %s", tt.name)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Normalized tokens for duplication detection
+// ---------------------------------------------------------------------------
+
+func TestGoParser_NormalizedTokens_SameStructureSameTokens(t *testing.T) {
+	// Two functions with different variable names but same structure should produce
+	// the same normalized tokens.
+	src1 := `package a
+func Foo(x int) int { return x + 1 }
+`
+	src2 := `package a
+func Bar(y int) int { return y + 1 }
+`
+	p := parser.New()
+	dir := t.TempDir()
+
+	path1 := writeGoFile(t, dir, "a.go", src1)
+	path2 := writeGoFile(t, dir, "b.go", src2)
+
+	r1, err := p.AnalyzeFile(path1)
+	require.NoError(t, err)
+	r2, err := p.AnalyzeFile(path2)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, r1.NormalizedTokens)
+	assert.Equal(t, r1.NormalizedTokens, r2.NormalizedTokens,
+		"same structure with different names should yield identical tokens")
+}
+
+func TestGoParser_NormalizedTokens_DifferentStructureDifferentTokens(t *testing.T) {
+	src1 := `package a
+func Foo(x int) int { return x + 1 }
+`
+	src2 := `package a
+func Bar(x int) int { if x > 0 { return x } else { return -x } }
+`
+	p := parser.New()
+	dir := t.TempDir()
+
+	path1 := writeGoFile(t, dir, "a.go", src1)
+	path2 := writeGoFile(t, dir, "b.go", src2)
+
+	r1, err := p.AnalyzeFile(path1)
+	require.NoError(t, err)
+	r2, err := p.AnalyzeFile(path2)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, r1.NormalizedTokens, r2.NormalizedTokens,
+		"different structure should yield different tokens")
+}
+
+func TestGoParser_NormalizedTokens_CommentsExcluded(t *testing.T) {
+	srcWithComments := `package a
+// This is a comment
+func Foo(x int) int { return x + 1 }
+`
+	srcWithoutComments := `package a
+func Foo(x int) int { return x + 1 }
+`
+	p := parser.New()
+	dir := t.TempDir()
+
+	path1 := writeGoFile(t, dir, "a.go", srcWithComments)
+	path2 := writeGoFile(t, dir, "b.go", srcWithoutComments)
+
+	r1, err := p.AnalyzeFile(path1)
+	require.NoError(t, err)
+	r2, err := p.AnalyzeFile(path2)
+	require.NoError(t, err)
+
+	assert.Equal(t, r1.NormalizedTokens, r2.NormalizedTokens,
+		"comments should be excluded from normalized tokens")
+}
+
 func TestGoParser_NoCGoImport(t *testing.T) {
 	source := `package logic
 

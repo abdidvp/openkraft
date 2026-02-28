@@ -29,8 +29,8 @@ var ValidCategories = []string{
 // ValidSubMetrics enumerates all scoring sub-metric names.
 var ValidSubMetrics = []string{
 	// code_health
-	"function_size", "file_size", "nesting_depth",
-	"parameter_count", "complex_conditionals",
+	"function_size", "file_size", "cognitive_complexity",
+	"parameter_count", "code_duplication",
 	// discoverability
 	"naming_uniqueness", "file_naming_conventions",
 	"predictable_structure", "dependency_direction",
@@ -70,8 +70,11 @@ type ProfileOverrides struct {
 	MaxFileLines         *int              `yaml:"max_file_lines,omitempty"         json:"max_file_lines,omitempty"`
 	MaxNestingDepth      *int              `yaml:"max_nesting_depth,omitempty"      json:"max_nesting_depth,omitempty"`
 	MaxParameters        *int              `yaml:"max_parameters,omitempty"         json:"max_parameters,omitempty"`
-	MaxConditionalOps    *int              `yaml:"max_conditional_ops,omitempty"    json:"max_conditional_ops,omitempty"`
-	ExemptParamPatterns  []string          `yaml:"exempt_param_patterns,omitempty"  json:"exempt_param_patterns,omitempty"`
+	MaxConditionalOps      *int              `yaml:"max_conditional_ops,omitempty"      json:"max_conditional_ops,omitempty"`
+	MaxCognitiveComplexity *int              `yaml:"max_cognitive_complexity,omitempty" json:"max_cognitive_complexity,omitempty"`
+	MaxDuplicationPercent  *int              `yaml:"max_duplication_percent,omitempty"  json:"max_duplication_percent,omitempty"`
+	MinCloneTokens         *int              `yaml:"min_clone_tokens,omitempty"         json:"min_clone_tokens,omitempty"`
+	ExemptParamPatterns    []string          `yaml:"exempt_param_patterns,omitempty"    json:"exempt_param_patterns,omitempty"`
 	ContextFiles         []ContextFileSpec `yaml:"context_files,omitempty"          json:"context_files,omitempty"`
 	MinTestRatio         *float64          `yaml:"min_test_ratio,omitempty"         json:"min_test_ratio,omitempty"`
 	MaxGlobalVarPenalty  *int              `yaml:"max_global_var_penalty,omitempty" json:"max_global_var_penalty,omitempty"`
@@ -236,12 +239,15 @@ func (p ProfileOverrides) validate() error {
 
 	// int pointer fields must be > 0 if set
 	intFields := map[string]*int{
-		"max_function_lines":   p.MaxFunctionLines,
-		"max_file_lines":       p.MaxFileLines,
-		"max_nesting_depth":    p.MaxNestingDepth,
-		"max_parameters":       p.MaxParameters,
-		"max_conditional_ops":  p.MaxConditionalOps,
-		"max_global_var_penalty": p.MaxGlobalVarPenalty,
+		"max_function_lines":      p.MaxFunctionLines,
+		"max_file_lines":          p.MaxFileLines,
+		"max_nesting_depth":       p.MaxNestingDepth,
+		"max_parameters":          p.MaxParameters,
+		"max_conditional_ops":     p.MaxConditionalOps,
+		"max_cognitive_complexity": p.MaxCognitiveComplexity,
+		"max_duplication_percent":  p.MaxDuplicationPercent,
+		"min_clone_tokens":         p.MinCloneTokens,
+		"max_global_var_penalty":   p.MaxGlobalVarPenalty,
 	}
 	for name, ptr := range intFields {
 		if ptr != nil && *ptr <= 0 {

@@ -145,6 +145,15 @@ func BuildProfile(cfg domain.ProjectConfig) domain.ScoringProfile {
 	if p.MaxConditionalOps != nil {
 		base.MaxConditionalOps = *p.MaxConditionalOps
 	}
+	if p.MaxCognitiveComplexity != nil {
+		base.MaxCognitiveComplexity = *p.MaxCognitiveComplexity
+	}
+	if p.MaxDuplicationPercent != nil {
+		base.MaxDuplicationPercent = *p.MaxDuplicationPercent
+	}
+	if p.MinCloneTokens != nil {
+		base.MinCloneTokens = *p.MinCloneTokens
+	}
 	if len(p.ExemptParamPatterns) > 0 {
 		base.ExemptParamPatterns = p.ExemptParamPatterns
 	}

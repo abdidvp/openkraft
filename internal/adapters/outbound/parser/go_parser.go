@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	goparser "go/parser"
+	"go/scanner"
 	"go/token"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -17,8 +19,13 @@ type GoParser struct{}
 func New() *GoParser { return &GoParser{} }
 
 func (p *GoParser) AnalyzeFile(filePath string) (*domain.AnalyzedFile, error) {
+	src, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
 	fset := token.NewFileSet()
-	file, err := goparser.ParseFile(fset, filePath, nil, goparser.ParseComments)
+	file, err := goparser.ParseFile(fset, filePath, src, goparser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", filePath, err)
 	}
@@ -63,6 +70,9 @@ func (p *GoParser) AnalyzeFile(filePath string) (*domain.AnalyzedFile, error) {
 	// Error calls and type assertions require a deep walk.
 	result.ErrorCalls = extractErrorCalls(file)
 	result.TypeAssertions = extractTypeAssertions(file)
+
+	// Normalized tokens for duplication detection.
+	result.NormalizedTokens = normalizeTokens(src)
 
 	return result, nil
 }
@@ -139,10 +149,11 @@ func (p *GoParser) processFunc(decl *ast.FuncDecl, fset *token.FileSet) domain.F
 		}
 	}
 
-	// Nesting depth and conditional complexity.
+	// Nesting depth, conditional complexity, and cognitive complexity.
 	if decl.Body != nil {
 		f.MaxNesting = maxNestingDepth(decl.Body, 0)
 		f.MaxCondOps = maxConditionalOps(decl.Body)
+		f.CognitiveComplexity = cognitiveComplexity(decl.Body)
 		lines := f.LineEnd - f.LineStart + 1
 		f.StringLiteralRatio = stringLiteralRatio(fset, decl.Body, lines)
 		f.MaxCaseArms, f.AvgCaseLines = switchDispatchMetrics(fset, decl.Body)
@@ -281,6 +292,216 @@ func countBoolOps(expr ast.Expr) int {
 		count = 1
 	}
 	return count + countBoolOps(bin.X) + countBoolOps(bin.Y)
+}
+
+// --- Cognitive complexity (Sonar algorithm) ---
+
+// cognitiveComplexity computes the cognitive complexity of a function body
+// following the SonarQube specification adapted for Go:
+//
+//   - +1 with nesting increment for: if (not else-if), for, range, switch, typeswitch, select
+//   - +1 without nesting increment for: else if, else, goto, labeled break/continue
+//   - Nesting level increases inside: if, else if, else, for, range, switch, typeswitch, select, func literals
+//   - Boolean operator sequences: +1 per sequence of identical operators; +1 per operator type transition
+func cognitiveComplexity(body *ast.BlockStmt) int {
+	s := &cogState{}
+	s.walkBlock(body)
+	return s.score
+}
+
+type cogState struct {
+	score    int
+	nesting  int
+}
+
+func (s *cogState) walkBlock(block *ast.BlockStmt) {
+	if block == nil {
+		return
+	}
+	for _, stmt := range block.List {
+		s.walkStmt(stmt)
+	}
+}
+
+func (s *cogState) walkStmt(stmt ast.Stmt) {
+	switch st := stmt.(type) {
+	case *ast.IfStmt:
+		s.walkIf(st, true)
+
+	case *ast.ForStmt:
+		s.score += 1 + s.nesting // +1 with nesting penalty
+		if st.Cond != nil {
+			s.walkBoolOps(st.Cond) // boolean operators in for-condition
+		}
+		s.nesting++
+		s.walkBlock(st.Body)
+		s.nesting--
+
+	case *ast.RangeStmt:
+		s.score += 1 + s.nesting
+		s.nesting++
+		s.walkBlock(st.Body)
+		s.nesting--
+
+	case *ast.SwitchStmt:
+		s.score += 1 + s.nesting
+		// Note: st.Tag is not a boolean expression (it's the switch value),
+		// so walkBoolOps is not called here. Boolean ops in case clauses
+		// are not penalized per the SonarQube spec.
+		s.nesting++
+		s.walkBlock(st.Body)
+		s.nesting--
+
+	case *ast.TypeSwitchStmt:
+		s.score += 1 + s.nesting
+		s.nesting++
+		s.walkBlock(st.Body)
+		s.nesting--
+
+	case *ast.SelectStmt:
+		s.score += 1 + s.nesting
+		s.nesting++
+		s.walkBlock(st.Body)
+		s.nesting--
+
+	case *ast.BranchStmt:
+		if st.Tok == token.GOTO {
+			s.score++ // +1, no nesting
+		} else if st.Label != nil && (st.Tok == token.BREAK || st.Tok == token.CONTINUE) {
+			s.score++ // labeled break/continue +1, no nesting
+		}
+
+	case *ast.BlockStmt:
+		s.walkBlock(st)
+
+	case *ast.CaseClause:
+		for _, body := range st.Body {
+			s.walkStmt(body)
+		}
+
+	case *ast.CommClause:
+		for _, body := range st.Body {
+			s.walkStmt(body)
+		}
+
+	case *ast.LabeledStmt:
+		s.walkStmt(st.Stmt)
+
+	case *ast.ExprStmt:
+		s.walkExprForFuncLiterals(st.X)
+
+	case *ast.AssignStmt:
+		for _, rhs := range st.Rhs {
+			s.walkExprForFuncLiterals(rhs)
+		}
+
+	case *ast.ReturnStmt:
+		for _, r := range st.Results {
+			s.walkExprForFuncLiterals(r)
+		}
+
+	case *ast.DeferStmt:
+		s.walkExprForFuncLiterals(st.Call)
+
+	case *ast.GoStmt:
+		s.walkExprForFuncLiterals(st.Call)
+
+	case *ast.SendStmt:
+		// no control flow
+
+	case *ast.DeclStmt:
+		// variable declarations may contain func literals
+		if gd, ok := st.Decl.(*ast.GenDecl); ok {
+			for _, spec := range gd.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for _, v := range vs.Values {
+						s.walkExprForFuncLiterals(v)
+					}
+				}
+			}
+		}
+	}
+}
+
+// walkIf handles if/else-if/else chains. The first if in a chain gets +1
+// with nesting penalty. Subsequent else-if and else get +1 without nesting penalty.
+func (s *cogState) walkIf(stmt *ast.IfStmt, isFirst bool) {
+	if isFirst {
+		s.score += 1 + s.nesting // +1 with nesting
+	} else {
+		s.score++ // else-if: +1, no nesting penalty
+	}
+
+	// Count boolean operator sequences in condition
+	if stmt.Cond != nil {
+		s.walkBoolOps(stmt.Cond)
+	}
+
+	s.nesting++
+	s.walkBlock(stmt.Body)
+	s.nesting--
+
+	// Handle else/else-if
+	if stmt.Else != nil {
+		switch elseStmt := stmt.Else.(type) {
+		case *ast.IfStmt:
+			s.walkIf(elseStmt, false) // else-if continues the chain
+		case *ast.BlockStmt:
+			s.score++ // else: +1, no nesting penalty
+			s.nesting++
+			s.walkBlock(elseStmt)
+			s.nesting--
+		}
+	}
+}
+
+// walkBoolOps counts +1 per sequence of identical boolean operators,
+// and +1 per transition between && and ||.
+// "a && b && c" = 1 sequence. "a && b || c" = 2 sequences.
+func (s *cogState) walkBoolOps(expr ast.Expr) {
+	ops := flattenBoolOps(expr)
+	if len(ops) == 0 {
+		return
+	}
+	s.score++ // first sequence
+	for i := 1; i < len(ops); i++ {
+		if ops[i] != ops[i-1] {
+			s.score++ // operator transition
+		}
+	}
+}
+
+// flattenBoolOps collects the sequence of &&/|| operators in left-to-right order.
+func flattenBoolOps(expr ast.Expr) []token.Token {
+	bin, ok := expr.(*ast.BinaryExpr)
+	if !ok {
+		return nil
+	}
+	if bin.Op != token.LAND && bin.Op != token.LOR {
+		return nil
+	}
+	var ops []token.Token
+	ops = append(ops, flattenBoolOps(bin.X)...)
+	ops = append(ops, bin.Op)
+	ops = append(ops, flattenBoolOps(bin.Y)...)
+	return ops
+}
+
+// walkExprForFuncLiterals walks an expression tree to find func literals,
+// which increase nesting level for cognitive complexity.
+func (s *cogState) walkExprForFuncLiterals(expr ast.Expr) {
+	if expr == nil {
+		return
+	}
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if fl, ok := n.(*ast.FuncLit); ok {
+			s.nesting++
+			s.walkBlock(fl.Body)
+			s.nesting--
+			return false // don't recurse into children again
+		}
+		return true
+	})
 }
 
 // --- Error calls ---
@@ -454,6 +675,49 @@ func switchDispatchMetrics(fset *token.FileSet, body *ast.BlockStmt) (int, float
 	})
 
 	return maxArms, avgLines
+}
+
+// --- Normalized tokens for duplication detection ---
+
+// normalizeTokens tokenizes Go source and replaces identifiers and literals
+// with canonical placeholder values so that structurally identical code
+// fragments produce the same token sequence regardless of naming.
+//
+// Normalization rules:
+//   - IDENT → -1
+//   - STRING → -2, INT → -3, FLOAT → -4, IMAG → -5, CHAR → -6
+//   - Comments → skipped
+//   - Structural tokens (keywords, operators, delimiters) → int(tok)
+func normalizeTokens(src []byte) []int {
+	var s scanner.Scanner
+	fset := token.NewFileSet()
+	file := fset.AddFile("", fset.Base(), len(src))
+	s.Init(file, src, nil, 0) // mode 0: skip comments
+
+	var tokens []int
+	for {
+		_, tok, _ := s.Scan()
+		if tok == token.EOF {
+			break
+		}
+		switch {
+		case tok == token.IDENT:
+			tokens = append(tokens, -1)
+		case tok == token.STRING:
+			tokens = append(tokens, -2)
+		case tok == token.INT:
+			tokens = append(tokens, -3)
+		case tok == token.FLOAT:
+			tokens = append(tokens, -4)
+		case tok == token.IMAG:
+			tokens = append(tokens, -5)
+		case tok == token.CHAR:
+			tokens = append(tokens, -6)
+		default:
+			tokens = append(tokens, int(tok))
+		}
+	}
+	return tokens
 }
 
 // --- Helpers ---

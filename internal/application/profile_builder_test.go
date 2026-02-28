@@ -105,6 +105,26 @@ func TestBuildProfile_LayerAliasesOverride(t *testing.T) {
 	assert.False(t, hasAdapter, "original aliases should be replaced")
 }
 
+func TestBuildProfile_NewCognitiveComplexityOverride(t *testing.T) {
+	maxCC := 20
+	maxDup := 10
+	minClone := 80
+	cfg := domain.ProjectConfig{
+		Profile: &domain.ProfileOverrides{
+			MaxCognitiveComplexity: &maxCC,
+			MaxDuplicationPercent:  &maxDup,
+			MinCloneTokens:         &minClone,
+		},
+	}
+	p := application.BuildProfile(cfg)
+
+	assert.Equal(t, 20, p.MaxCognitiveComplexity)
+	assert.Equal(t, 10, p.MaxDuplicationPercent)
+	assert.Equal(t, 80, p.MinCloneTokens)
+	// Non-overridden fields keep defaults
+	assert.Equal(t, 50, p.MaxFunctionLines)
+}
+
 func TestBuildProfile_TypePlusOverride(t *testing.T) {
 	maxParams := 6
 	cfg := domain.ProjectConfig{
