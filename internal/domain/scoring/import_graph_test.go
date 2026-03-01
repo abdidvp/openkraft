@@ -730,3 +730,266 @@ func TestScoreImportGraph_WithCycles(t *testing.T) {
 	score := scoreImportGraph(g, &p)
 	assert.Less(t, score, 0.7, "cycles should significantly reduce score")
 }
+
+// --- classifyByNaming tests ---
+
+func TestClassifyByNaming(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		pkgName string
+		role    ArchRole
+		minConf float64
+	}{
+		{"domain dir", "internal/domain", "domain", RoleCore, 0.80},
+		{"models dir", "internal/models", "models", RoleCore, 0.80},
+		{"handler dir", "handlers/user", "user", RoleAdapter, 0.80},
+		{"cmd dir", "cmd/server", "server", RoleAdapter, 0.75}, // deepest match: "server" → adapter (cmd/ handled by classifyRole hard-code)
+		{"main package", "pkg/utils", "main", RoleEntryPoint, 0.95},
+		{"adapter dir", "internal/adapters/db", "db", RoleAdapter, 0.85},
+		{"ports dir", "internal/ports", "ports", RolePorts, 0.90},
+		{"service dir", "internal/service", "service", RoleOrchestrator, 0.75},
+		{"usecase dir", "internal/usecase", "usecase", RoleOrchestrator, 0.80},
+		{"utils - no match", "pkg/utils", "utils", "", 0.0},
+		{"deep adapter", "internal/adapters/outbound/db", "db", RoleAdapter, 0.85},
+		{"infra dir", "internal/infra/cache", "cache", RoleAdapter, 0.80},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sig := classifyByNaming(tt.path, tt.pkgName)
+			assert.Equal(t, tt.role, sig.Role)
+			assert.GreaterOrEqual(t, sig.Confidence, tt.minConf)
+		})
+	}
+}
+
+// --- classifyByImports tests ---
+
+func TestClassifyByImports_StdlibIO(t *testing.T) {
+	node := &PackageNode{ImportsStdlibIO: true}
+	sig := classifyByImports(node)
+	assert.Equal(t, RoleAdapter, sig.Role)
+	assert.InDelta(t, 0.70, sig.Confidence, 0.01)
+}
+
+func TestClassifyByImports_ExternalIO(t *testing.T) {
+	node := &PackageNode{ImportsExtIO: true}
+	sig := classifyByImports(node)
+	assert.Equal(t, RoleAdapter, sig.Role)
+	assert.InDelta(t, 0.70, sig.Confidence, 0.01)
+}
+
+func TestClassifyByImports_PurePackageWithInterfaces(t *testing.T) {
+	node := &PackageNode{Interfaces: 3, Structs: 1}
+	sig := classifyByImports(node)
+	assert.Equal(t, RoleCore, sig.Role)
+	assert.InDelta(t, 0.65, sig.Confidence, 0.01)
+}
+
+func TestClassifyByImports_InterfacesWithInternalImports(t *testing.T) {
+	node := &PackageNode{Interfaces: 2, ImportsInternal: []string{"other"}}
+	sig := classifyByImports(node)
+	assert.Equal(t, RoleCore, sig.Role)
+	assert.InDelta(t, 0.55, sig.Confidence, 0.01)
+}
+
+func TestClassifyByImports_NoSignal(t *testing.T) {
+	node := &PackageNode{Structs: 3}
+	sig := classifyByImports(node)
+	assert.Equal(t, ArchRole(""), sig.Role)
+	assert.Equal(t, 0.0, sig.Confidence)
+}
+
+// --- classifyByAST tests ---
+
+func TestClassifyByAST_Main(t *testing.T) {
+	node := &PackageNode{HasMain: true}
+	sig := classifyByAST(node)
+	assert.Equal(t, RoleEntryPoint, sig.Role)
+	assert.InDelta(t, 0.95, sig.Confidence, 0.01)
+}
+
+func TestClassifyByAST_IOParams(t *testing.T) {
+	node := &PackageNode{HasIOParams: true}
+	sig := classifyByAST(node)
+	assert.Equal(t, RoleAdapter, sig.Role)
+	assert.InDelta(t, 0.75, sig.Confidence, 0.01)
+}
+
+func TestClassifyByAST_HighInterfaceRatio(t *testing.T) {
+	node := &PackageNode{Interfaces: 3, Structs: 1}
+	sig := classifyByAST(node)
+	assert.Equal(t, RolePorts, sig.Role)
+	assert.InDelta(t, 0.70, sig.Confidence, 0.01)
+}
+
+func TestClassifyByAST_NoSignal(t *testing.T) {
+	node := &PackageNode{Structs: 5}
+	sig := classifyByAST(node)
+	assert.Equal(t, ArchRole(""), sig.Role)
+}
+
+// --- fuseSignals tests ---
+
+func TestFuseSignals_Agreement(t *testing.T) {
+	// Two signals agree on adapter → boosted confidence
+	role, conf := fuseSignals(
+		RoleSignal{RoleAdapter, 0.80},
+		RoleSignal{RoleAdapter, 0.70},
+	)
+	assert.Equal(t, RoleAdapter, role)
+	assert.InDelta(t, 0.90, conf, 0.01) // max(0.80, 0.70) + 0.10
+}
+
+func TestFuseSignals_Conflict(t *testing.T) {
+	// Signals disagree → highest confidence wins, no boost
+	role, conf := fuseSignals(
+		RoleSignal{RoleAdapter, 0.85},
+		RoleSignal{RoleCore, 0.70},
+	)
+	assert.Equal(t, RoleAdapter, role)
+	assert.InDelta(t, 0.85, conf, 0.01) // no boost
+}
+
+func TestFuseSignals_SingleSignal(t *testing.T) {
+	role, conf := fuseSignals(RoleSignal{RoleCore, 0.80})
+	assert.Equal(t, RoleCore, role)
+	assert.InDelta(t, 0.80, conf, 0.01)
+}
+
+func TestFuseSignals_NoValidSignals(t *testing.T) {
+	role, conf := fuseSignals(
+		RoleSignal{RoleCore, 0.20},  // below 0.30 threshold
+		RoleSignal{},                 // empty
+	)
+	assert.Equal(t, RoleUnclassified, role)
+	assert.Equal(t, 0.0, conf)
+}
+
+func TestFuseSignals_ThreeWayAgreement(t *testing.T) {
+	role, conf := fuseSignals(
+		RoleSignal{RoleAdapter, 0.85},
+		RoleSignal{RoleAdapter, 0.70},
+		RoleSignal{RoleAdapter, 0.75},
+	)
+	assert.Equal(t, RoleAdapter, role)
+	assert.InDelta(t, 0.95, conf, 0.01) // 0.85 + 0.10 = 0.95 (capped)
+}
+
+// --- classifyRole integration tests ---
+
+func TestClassifyRole_RealWorldPaths(t *testing.T) {
+	profile := domain.DefaultProfile()
+	tests := []struct {
+		name     string
+		stripped string
+		fullPkg  string
+		node     *PackageNode
+		wantRole ArchRole
+	}{
+		// Terraform-style paths
+		{"terraform/internal/command", "internal/command", "m/internal/command",
+			&PackageNode{HasIOParams: false, ImportsStdlibIO: true}, RoleAdapter},
+		{"terraform/internal/providers", "internal/providers", "m/internal/providers",
+			&PackageNode{Interfaces: 3, Structs: 1}, RolePorts}, // AST: high interface ratio → ports (0.70)
+		// Cobra-style
+		{"cobra/command", "command", "m/command",
+			&PackageNode{}, RoleUnclassified}, // "command" not in hints
+		// Zap-style (flat, no layers)
+		{"zap/zapcore", "zapcore", "m/zapcore",
+			&PackageNode{Interfaces: 2, Structs: 5}, RoleUnclassified},
+		// Well-known patterns
+		{"handlers dir", "internal/handlers", "m/internal/handlers",
+			&PackageNode{HasIOParams: true}, RoleAdapter},
+		{"models dir", "internal/models", "m/internal/models",
+			&PackageNode{Structs: 5}, RoleCore},
+		{"cmd dir", "cmd/server", "m/cmd/server",
+			&PackageNode{HasMain: true}, RoleEntryPoint},
+		{"service dir", "internal/service", "m/internal/service",
+			&PackageNode{}, RoleOrchestrator},
+		// Root module = entry point
+		{"root module", "", "m",
+			&PackageNode{HasMain: true}, RoleEntryPoint},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			role, _ := classifyRole(tt.stripped, tt.fullPkg, "m", &profile, tt.node)
+			assert.Equal(t, tt.wantRole, role)
+		})
+	}
+}
+
+// --- BuildImportGraph import classification tests ---
+
+func TestBuildImportGraph_ClassifiesImports(t *testing.T) {
+	mod := "github.com/example/app"
+	analyzed := map[string]*domain.AnalyzedFile{
+		"handler/server.go": {
+			Path:    "handler/server.go",
+			Package: "handler",
+			Imports: []string{"net/http", "encoding/json", mod + "/domain"},
+			Functions: []domain.Function{
+				{Name: "ServeHTTP", Params: []domain.Param{
+					{Name: "w", Type: "http.ResponseWriter"},
+					{Name: "r", Type: "*http.Request"},
+				}},
+			},
+			Structs: []string{"Server"},
+		},
+		"domain/model.go": {
+			Path:       "domain/model.go",
+			Package:    "domain",
+			Imports:    []string{"fmt", "strings"},
+			Interfaces: []string{"Repository"},
+			Structs:    []string{"User"},
+		},
+		"main.go": {
+			Path:    "main.go",
+			Package: "main",
+			Imports: []string{"os", mod + "/handler"},
+			Functions: []domain.Function{
+				{Name: "main"},
+			},
+		},
+	}
+
+	g := BuildImportGraph(mod, analyzed)
+	require.NotNil(t, g)
+
+	// Handler package should detect stdlib I/O and I/O params
+	handlerNode := g.Packages[mod+"/handler"]
+	require.NotNil(t, handlerNode)
+	assert.True(t, handlerNode.ImportsStdlibIO, "net/http should be detected as stdlib I/O")
+	assert.True(t, handlerNode.HasIOParams, "http.ResponseWriter should be detected as I/O param")
+
+	// Domain package should not have I/O signals
+	domainNode := g.Packages[mod+"/domain"]
+	require.NotNil(t, domainNode)
+	assert.False(t, domainNode.ImportsStdlibIO, "fmt/strings are not I/O")
+	assert.False(t, domainNode.HasIOParams)
+
+	// Main package should detect main func and stdlib I/O (os)
+	mainNode := g.Packages[mod]
+	require.NotNil(t, mainNode)
+	assert.True(t, mainNode.HasMain)
+	assert.True(t, mainNode.ImportsStdlibIO, "os should be detected as stdlib I/O")
+}
+
+func TestBuildImportGraph_ClassifiesExternalIO(t *testing.T) {
+	mod := "github.com/example/app"
+	analyzed := map[string]*domain.AnalyzedFile{
+		"store/db.go": {
+			Path:    "store/db.go",
+			Package: "store",
+			Imports: []string{"github.com/jackc/pgx/v5", "context"},
+			Structs: []string{"PostgresStore"},
+		},
+	}
+
+	g := BuildImportGraph(mod, analyzed)
+	require.NotNil(t, g)
+
+	storeNode := g.Packages[mod+"/store"]
+	require.NotNil(t, storeNode)
+	assert.True(t, storeNode.ImportsExtIO, "pgx should be detected as external I/O")
+}
