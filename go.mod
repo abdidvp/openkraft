@@ -1,4 +1,4 @@
-module github.com/openkraft/openkraft
+module github.com/abdidvp/openkraft
 
 go 1.24.10
 

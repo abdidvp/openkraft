@@ -1,7 +1,7 @@
 package cli
 
 import (
-	mcpadapter "github.com/openkraft/openkraft/internal/adapters/inbound/mcp"
+	mcpadapter "github.com/abdidvp/openkraft/internal/adapters/inbound/mcp"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"

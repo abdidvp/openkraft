@@ -8,12 +8,12 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/golden"
-	"github.com/openkraft/openkraft/internal/domain/scoring"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/detector"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/parser"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/scanner"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/golden"
+	"github.com/abdidvp/openkraft/internal/domain/scoring"
 )
 
 // registerResources registers all OpenKraft MCP resources on the given server.

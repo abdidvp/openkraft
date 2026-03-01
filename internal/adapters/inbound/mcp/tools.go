@@ -11,15 +11,15 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	cacheAdapter "github.com/openkraft/openkraft/internal/adapters/outbound/cache"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
-	"github.com/openkraft/openkraft/internal/application"
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/golden"
-	"github.com/openkraft/openkraft/internal/domain/scoring"
+	cacheAdapter "github.com/abdidvp/openkraft/internal/adapters/outbound/cache"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/config"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/detector"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/parser"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/scanner"
+	"github.com/abdidvp/openkraft/internal/application"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/golden"
+	"github.com/abdidvp/openkraft/internal/domain/scoring"
 )
 
 // registerTools registers all OpenKraft MCP tools on the given server.

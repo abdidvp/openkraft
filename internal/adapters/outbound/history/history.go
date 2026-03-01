@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 const historyFile = ".openkraft/history/scores.json"

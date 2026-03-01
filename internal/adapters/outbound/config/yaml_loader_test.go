@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	appconfig "github.com/openkraft/openkraft/internal/adapters/outbound/config"
-	"github.com/openkraft/openkraft/internal/domain"
+	appconfig "github.com/abdidvp/openkraft/internal/adapters/outbound/config"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

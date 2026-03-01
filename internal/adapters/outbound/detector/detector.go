@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // DetectedModuleResult is the concrete result from the detector adapter.

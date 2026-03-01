@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/scanner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

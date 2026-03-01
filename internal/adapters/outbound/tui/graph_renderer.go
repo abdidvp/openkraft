@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/scoring"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/scoring"
 )
 
 const graphMaxRows = 15

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 func sortInts(s []int) { slices.Sort(s) }

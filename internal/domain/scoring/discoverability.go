@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // ScoreDiscoverability evaluates how easily AI agents can find relevant code.

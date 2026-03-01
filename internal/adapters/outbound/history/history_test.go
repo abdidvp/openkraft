@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/history"
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/history"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

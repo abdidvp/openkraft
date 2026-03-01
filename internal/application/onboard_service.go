@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/golden"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/golden"
 )
 
 // OnboardService orchestrates the onboard pipeline:

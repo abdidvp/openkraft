@@ -3,7 +3,7 @@ package cli_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/inbound/cli"
+	"github.com/abdidvp/openkraft/internal/adapters/inbound/cli"
 	"github.com/stretchr/testify/assert"
 )
 

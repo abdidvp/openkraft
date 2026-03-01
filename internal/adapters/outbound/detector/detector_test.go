@@ -3,9 +3,9 @@ package detector_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/detector"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/scanner"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

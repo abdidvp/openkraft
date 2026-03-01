@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -3,7 +3,7 @@ package scoring
 import (
 	"strings"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // buildLayerMap constructs a map from directory name to canonical layer name,

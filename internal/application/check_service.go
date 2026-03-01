@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/check"
-	"github.com/openkraft/openkraft/internal/domain/golden"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/check"
+	"github.com/abdidvp/openkraft/internal/domain/golden"
 )
 
 // CheckService orchestrates the check pipeline:

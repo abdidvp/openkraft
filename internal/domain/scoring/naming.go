@@ -7,7 +7,7 @@ import (
 
 	"github.com/fatih/camelcase"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // vagueWords are generic function name words that reduce discoverability.

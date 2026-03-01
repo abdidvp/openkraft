@@ -3,7 +3,7 @@ package mcp_test
 import (
 	"testing"
 
-	mcpadapter "github.com/openkraft/openkraft/internal/adapters/inbound/mcp"
+	mcpadapter "github.com/abdidvp/openkraft/internal/adapters/inbound/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

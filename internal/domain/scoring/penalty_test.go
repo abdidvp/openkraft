@@ -3,7 +3,7 @@ package scoring
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 

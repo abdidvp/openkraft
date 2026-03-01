@@ -3,8 +3,8 @@ package golden_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/golden"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/golden"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

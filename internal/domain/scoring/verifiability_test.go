@@ -3,8 +3,8 @@ package scoring_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/domain"
-	"github.com/openkraft/openkraft/internal/domain/scoring"
+	"github.com/abdidvp/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain/scoring"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/config"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/detector"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/parser"
-	"github.com/openkraft/openkraft/internal/adapters/outbound/scanner"
-	"github.com/openkraft/openkraft/internal/application"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/config"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/detector"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/parser"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/scanner"
+	"github.com/abdidvp/openkraft/internal/application"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

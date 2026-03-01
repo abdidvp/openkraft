@@ -3,7 +3,7 @@ package scoring
 import (
 	"math"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // decayK controls how gradually credit decays past the threshold.

@@ -3,8 +3,8 @@ package application_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/application"
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/application"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 

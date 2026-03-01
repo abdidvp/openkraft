@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/cache"
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/cache"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 func TestStore_SaveAndLoad(t *testing.T) {

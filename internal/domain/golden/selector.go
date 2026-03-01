@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // GoldenModule represents a module ranked by its golden score.

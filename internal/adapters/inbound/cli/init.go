@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +116,7 @@ func generateConfig(pt domain.ProjectType) string {
 		profile.MinTestRatio, profile.MaxGlobalVarPenalty,
 		profile.NamingConvention)
 
-	result := fmt.Sprintf("# OpenKraft configuration\n# See: https://github.com/openkraft/openkraft\n\nproject_type: %s\n\n%s\n", pt, weightsSection)
+	result := fmt.Sprintf("# OpenKraft configuration\n# See: https://github.com/abdidvp/openkraft\n\nproject_type: %s\n\n%s\n", pt, weightsSection)
 
 	if skipSection != "" {
 		result += skipSection + "\n"

@@ -3,8 +3,8 @@ package tui_test
 import (
 	"testing"
 
-	"github.com/openkraft/openkraft/internal/adapters/outbound/tui"
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/adapters/outbound/tui"
+	"github.com/abdidvp/openkraft/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 

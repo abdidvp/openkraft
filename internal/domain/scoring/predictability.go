@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/openkraft/openkraft/internal/domain"
+	"github.com/abdidvp/openkraft/internal/domain"
 )
 
 // ScorePredictability evaluates code standardization for AI value.
