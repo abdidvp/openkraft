@@ -1,49 +1,59 @@
 package scoring
 
-import "strings"
+import (
+	"strings"
 
-// isAdapterImport checks if an import path refers to an adapter package.
-func isAdapterImport(importPath string) bool {
-	return strings.Contains(importPath, "/adapters/") || strings.Contains(importPath, "/adapter/")
+	"github.com/openkraft/openkraft/internal/domain"
+)
+
+// buildLayerMap constructs a map from directory name to canonical layer name,
+// using both canonical names and profile aliases.
+func buildLayerMap(profile *domain.ScoringProfile) map[string]string {
+	m := map[string]string{
+		"domain":      "domain",
+		"application": "application",
+		"adapters":    "adapters",
+	}
+	if profile != nil {
+		for alias, canonical := range profile.LayerAliases {
+			m[alias] = canonical
+		}
+	}
+	return m
 }
 
 // fileLayer returns the architectural layer of a file: "domain", "application", or "adapters".
-func fileLayer(path string) string {
+func fileLayer(path string, profile *domain.ScoringProfile) string {
 	normalized := strings.ReplaceAll(path, "\\", "/")
-	switch {
-	case strings.Contains(normalized, "/domain/"):
-		return "domain"
-	case strings.Contains(normalized, "/application/"):
-		return "application"
-	case strings.Contains(normalized, "/adapters/"):
-		return "adapters"
-	default:
-		return ""
+	layers := buildLayerMap(profile)
+	for name, canonical := range layers {
+		if strings.Contains(normalized, "/"+name+"/") {
+			return canonical
+		}
 	}
+	return ""
 }
 
 // importLayer returns the architectural layer of an import path.
-func importLayer(importPath string) string {
-	switch {
-	case strings.Contains(importPath, "/domain/"):
-		return "domain"
-	case strings.Contains(importPath, "/application/"):
-		return "application"
-	case isAdapterImport(importPath):
-		return "adapters"
-	default:
-		return "unknown"
+func importLayer(importPath string, profile *domain.ScoringProfile) string {
+	layers := buildLayerMap(profile)
+	for name, canonical := range layers {
+		if strings.Contains(importPath, "/"+name+"/") || strings.HasSuffix(importPath, "/"+name) {
+			return canonical
+		}
 	}
+	return "unknown"
 }
 
 // violatesDependencyDirection checks if an import from a given layer breaks
 // the inward dependency rule.
-func violatesDependencyDirection(layer, importPath string) bool {
+func violatesDependencyDirection(layer, importPath string, profile *domain.ScoringProfile) bool {
+	impLayer := importLayer(importPath, profile)
 	switch layer {
 	case "domain":
-		return strings.Contains(importPath, "/application/") || isAdapterImport(importPath)
+		return impLayer == "application" || impLayer == "adapters"
 	case "application":
-		return isAdapterImport(importPath)
+		return impLayer == "adapters"
 	default:
 		return false
 	}

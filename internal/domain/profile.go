@@ -44,6 +44,12 @@ type ScoringProfile struct {
 	CollisionWeight            float64    // weight for collision rate signal (default: 0.15)
 	StructureCompositeWeights  [3]float64 // layers, suffix, filecount weights (default: {0.5, 0.3, 0.2})
 
+	// Import graph
+	CyclePenaltyWeight        float64 // weight of cycle penalty within graph score (default: 0.40)
+	MaxDistanceFromMain       float64 // distance threshold above which score decays (default: 0.40)
+	CouplingOutlierMultiplier float64 // Ce > multiplier * median = outlier (default: 2.0)
+	CompositionRoots          []string // module-relative paths exempt from adapter-to-adapter violations
+
 	// Predictability
 	MaxGlobalVarPenalty int
 }
@@ -96,7 +102,10 @@ func DefaultProfile() ScoringProfile {
 		NamingCompositeWeights:     [3]float64{0.30, 0.30, 0.25},
 		CollisionWeight:            0.15,
 		StructureCompositeWeights:  [3]float64{0.5, 0.3, 0.2},
-		MaxGlobalVarPenalty:        3,
+		CyclePenaltyWeight:        0.40,
+		MaxDistanceFromMain:       0.40,
+		CouplingOutlierMultiplier: 2.0,
+		MaxGlobalVarPenalty:       3,
 	}
 }
 

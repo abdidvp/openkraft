@@ -25,6 +25,7 @@ type ScanResult struct {
 	TestFiles       []string `json:"test_files"`
 	AllFiles        []string `json:"all_files"`
 	HasGoMod        bool     `json:"has_go_mod"`
+	ModulePath      string   `json:"module_path,omitempty"`
 	HasClaudeMD     bool     `json:"has_claude_md"`
 	HasCursorRules  bool     `json:"has_cursor_rules"`
 	HasAgentsMD     bool     `json:"has_agents_md"`

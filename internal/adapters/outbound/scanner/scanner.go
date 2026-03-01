@@ -73,6 +73,7 @@ func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.
 		case d.Name() == "go.mod" && isRoot:
 			result.HasGoMod = true
 			result.Language = "go"
+			result.ModulePath = readModulePath(filepath.Join(absPath, "go.mod"))
 		case d.Name() == "CLAUDE.md" && isRoot:
 			result.HasClaudeMD = true
 		case d.Name() == ".cursorrules" && isRoot:
@@ -102,6 +103,21 @@ func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.
 	}
 
 	return result, err
+}
+
+// readModulePath extracts the module path from a go.mod file.
+func readModulePath(goModPath string) string {
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
 }
 
 const maxReadSize = 16 * 1024 // 16KB cap for file reads.

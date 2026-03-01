@@ -94,6 +94,30 @@ func TestFileScanner_PopulatesFileMetadata(t *testing.T) {
 	assert.Greater(t, result.CursorRulesSize, 0, "should read .cursorrules size")
 }
 
+func TestFileScanner_ReadsModulePath(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module github.com/example/myproject\n\ngo 1.21\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644))
+
+	s := scanner.New()
+	result, err := s.Scan(dir)
+	require.NoError(t, err)
+
+	assert.True(t, result.HasGoMod)
+	assert.Equal(t, "github.com/example/myproject", result.ModulePath)
+}
+
+func TestFileScanner_ModulePathEmptyWithoutGoMod(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644))
+
+	s := scanner.New()
+	result, err := s.Scan(dir)
+	require.NoError(t, err)
+
+	assert.Empty(t, result.ModulePath)
+}
+
 func TestFileScanner_AIContextOnlyFromRoot(t *testing.T) {
 	// AI context files in subdirectories should not set the root-level flags.
 	// Use an isolated temp dir so the test doesn't depend on repo state.

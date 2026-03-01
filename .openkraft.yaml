@@ -16,6 +16,10 @@ skip:
     - interface_contracts
     - module_completeness
 
+profile:
+  composition_roots:
+    - internal/adapters/inbound/cli
+
 # profile:
 #   exempt_param_patterns:
 #     - Reconstruct

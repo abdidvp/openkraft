@@ -78,6 +78,7 @@ type ProfileOverrides struct {
 	ContextFiles         []ContextFileSpec `yaml:"context_files,omitempty"          json:"context_files,omitempty"`
 	MinTestRatio         *float64          `yaml:"min_test_ratio,omitempty"         json:"min_test_ratio,omitempty"`
 	MaxGlobalVarPenalty  *int              `yaml:"max_global_var_penalty,omitempty" json:"max_global_var_penalty,omitempty"`
+	CompositionRoots    []string          `yaml:"composition_roots,omitempty"     json:"composition_roots,omitempty"`
 }
 
 // SkipConfig specifies categories and sub-metrics to exclude from scoring.

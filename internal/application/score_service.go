@@ -33,45 +33,67 @@ func NewScoreService(
 	}
 }
 
-func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
-	// 0. Load config
+// ProjectData holds the intermediate results of project analysis,
+// before scoring. Used by the graph command to access scan data
+// without running the full scoring pipeline.
+type ProjectData struct {
+	Config   domain.ProjectConfig
+	Profile  domain.ScoringProfile
+	Scan     *domain.ScanResult
+	Modules  []domain.DetectedModule
+	Analyzed map[string]*domain.AnalyzedFile
+}
+
+// AnalyzeProject scans, detects modules, and analyzes files without scoring.
+func (s *ScoreService) AnalyzeProject(projectPath string) (*ProjectData, error) {
 	cfg, err := s.configLoader.Load(projectPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	// 1. Scan filesystem (pass exclude paths from config)
 	scan, err := s.scanner.Scan(projectPath, cfg.ExcludePaths...)
 	if err != nil {
 		return nil, fmt.Errorf("scanning project: %w", err)
 	}
 
-	// 2. Detect modules
 	modules, err := s.detector.Detect(scan)
 	if err != nil {
 		return nil, fmt.Errorf("detecting modules: %w", err)
 	}
 
-	// 3. Analyze Go files via AST
 	analyzed := make(map[string]*domain.AnalyzedFile)
 	for _, f := range scan.GoFiles {
 		absPath := filepath.Join(scan.RootPath, f)
 		af, err := s.analyzer.AnalyzeFile(absPath)
 		if err != nil {
-			continue // skip files that can't be parsed
+			continue
 		}
-		af.Path = f // store relative path for clean issue reporting
+		af.Path = f
 		analyzed[f] = af
 	}
 
-	// 4. Build scoring profile from config defaults + user overrides
 	profile := BuildProfile(cfg)
 
-	// 5-7. Score with pre-loaded data
-	result := s.ScoreWithData(cfg, profile, scan, modules, analyzed)
+	return &ProjectData{
+		Config:   cfg,
+		Profile:  profile,
+		Scan:     scan,
+		Modules:  modules,
+		Analyzed: analyzed,
+	}, nil
+}
+
+func (s *ScoreService) ScoreProject(projectPath string) (*domain.Score, error) {
+	data, err := s.AnalyzeProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+
+	result := s.ScoreWithData(data.Config, data.Profile, data.Scan, data.Modules, data.Analyzed)
 
 	// Attach config to output if non-default
 	var appliedCfg *domain.ProjectConfig
+	cfg := data.Config
 	if cfg.ProjectType != "" || len(cfg.Weights) > 0 || len(cfg.Skip.Categories) > 0 || len(cfg.Skip.SubMetrics) > 0 {
 		appliedCfg = &cfg
 	}
@@ -165,6 +187,9 @@ func BuildProfile(cfg domain.ProjectConfig) domain.ScoringProfile {
 	}
 	if p.MaxGlobalVarPenalty != nil {
 		base.MaxGlobalVarPenalty = *p.MaxGlobalVarPenalty
+	}
+	if len(p.CompositionRoots) > 0 {
+		base.CompositionRoots = p.CompositionRoots
 	}
 
 	return base
