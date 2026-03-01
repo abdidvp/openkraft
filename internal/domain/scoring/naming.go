@@ -31,7 +31,7 @@ func WordCountScore(name string) float64 {
 	case n == 5:
 		return 0.7
 	default: // 0 or >5
-		return 0.3
+		return 0.5
 	}
 }
 
@@ -178,11 +178,11 @@ func SymbolCollisionRate(analyzed map[string]*domain.AnalyzedFile) float64 {
 	totalNames := 0
 
 	for _, af := range analyzed {
-		if af.IsGenerated {
+		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
 			continue
 		}
 		for _, fn := range af.Functions {
-			if !fn.Exported {
+			if !fn.Exported || fn.Receiver != "" {
 				continue
 			}
 			totalNames++

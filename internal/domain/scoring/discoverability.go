@@ -25,7 +25,7 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 	sm1 := scoreNamingUniqueness(profile, analyzed)
 	sm2 := scoreFileNamingConventions(profile, scan, analyzed)
 	sm3 := scorePredictableStructure(profile, modules, scan, analyzed)
-	sm4 := scoreDiscoverabilityDependencyDirection(modules, analyzed)
+	sm4 := scoreDiscoverabilityDependencyDirection(profile, modules, scan, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
 
@@ -125,7 +125,7 @@ func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.Sca
 	patternName := "bare"
 	if c.dominantIsSuffixed {
 		patternName = "suffixed"
-		consistency = (c.consistency + suffixReuse(scan.GoFiles)) / 2.0
+		consistency = (c.consistency + suffixReuse(scan.GoFiles, profile.ExpectedFileSuffixes)) / 2.0
 	}
 
 	sm.Score = min(int(math.Round(consistency*float64(sm.Points))), sm.Points)
@@ -140,7 +140,7 @@ func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.Sca
 }
 
 // suffixReuse returns the ratio of suffixed files whose suffix appears more than once.
-func suffixReuse(goFiles []string) float64 {
+func suffixReuse(goFiles []string, expectedSuffixes []string) float64 {
 	counts := map[string]int{}
 	total := 0
 	for _, f := range goFiles {
@@ -149,7 +149,8 @@ func suffixReuse(goFiles []string) float64 {
 			continue
 		}
 		name := strings.TrimSuffix(base, ".go")
-		if idx := strings.LastIndex(name, "_"); idx >= 0 {
+		if hasKnownSuffix(name, expectedSuffixes) {
+			idx := strings.LastIndex(name, "_")
 			counts[name[idx:]]++
 			total++
 		}
@@ -175,8 +176,8 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 	sm := domain.SubMetric{Name: "predictable_structure", Points: 25}
 
 	if len(modules) <= 1 {
+		sm.Score = sm.Points
 		if len(modules) == 1 {
-			sm.Score = sm.Points
 			sm.Detail = "single module, nothing to compare"
 		} else {
 			sm.Detail = "no modules detected"
@@ -277,16 +278,50 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 	return sm
 }
 
-// scoreDiscoverabilityDependencyDirection (25 pts): import violations (adapter→adapter, domain→application).
-// Migrated from architecture.go:scoreDependencyDirection.
-func scoreDiscoverabilityDependencyDirection(modules []domain.DetectedModule, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+// scoreDiscoverabilityDependencyDirection (25 pts): composite of layer violations and import graph signals.
+// Layer violations (50%): adapter→adapter, domain→application import direction checks.
+// Import graph (50%): cycles, distance from main sequence, coupling outliers.
+// When either signal has no data, the other gets 100% weight.
+func scoreDiscoverabilityDependencyDirection(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
 	sm := domain.SubMetric{Name: "dependency_direction", Points: 25}
 
-	if len(modules) == 0 {
-		sm.Detail = "no modules to evaluate"
+	// Layer violations
+	layerScore, violations, totalChecked := scoreLayerViolations(profile, modules, analyzed)
+
+	// Import graph
+	var graph *ImportGraph
+	if scan != nil && scan.ModulePath != "" {
+		graph = BuildImportGraph(scan.ModulePath, analyzed)
+	}
+	graphScore := scoreImportGraph(graph, profile)
+
+	// Composite weighting
+	if totalChecked == 0 && (graph == nil || len(graph.Packages) <= 1) {
+		sm.Score = sm.Points
+		sm.Detail = "no layered files or import graph to evaluate"
 		return sm
 	}
 
+	layerWeight := 0.50
+	graphWeight := 0.50
+	if totalChecked == 0 {
+		layerWeight = 0.0
+		graphWeight = 1.0
+	}
+	if graph == nil || len(graph.Packages) <= 1 {
+		layerWeight = 1.0
+		graphWeight = 0.0
+	}
+
+	composite := layerScore*layerWeight + graphScore*graphWeight
+	sm.Score = min(int(math.Round(composite*float64(sm.Points))), sm.Points)
+	sm.Detail = formatDependencyDetail(violations, totalChecked, graph, graphScore)
+	return sm
+}
+
+// scoreLayerViolations checks import direction violations in layered architectures.
+// Returns (cleanRate 0.0-1.0, violationCount, totalChecked).
+func scoreLayerViolations(profile *domain.ScoringProfile, modules []domain.DetectedModule, analyzed map[string]*domain.AnalyzedFile) (float64, int, int) {
 	totalChecked := 0
 	violations := 0
 
@@ -299,13 +334,13 @@ func scoreDiscoverabilityDependencyDirection(modules []domain.DetectedModule, an
 			if !ok {
 				continue
 			}
-			layer := fileLayer(f)
+			layer := fileLayer(f, profile)
 			if layer == "" {
 				continue
 			}
 			totalChecked++
 			for _, imp := range af.Imports {
-				if violatesDependencyDirection(layer, imp) {
+				if violatesDependencyDirection(layer, imp, profile) {
 					violations++
 				}
 			}
@@ -313,15 +348,75 @@ func scoreDiscoverabilityDependencyDirection(modules []domain.DetectedModule, an
 	}
 
 	if totalChecked == 0 {
-		sm.Detail = "no layered files to evaluate"
-		return sm
+		return 1.0, 0, 0
 	}
 
-	violationRate := 1.0 - float64(violations)/float64(totalChecked)
-	sm.Score = min(int(math.Round(max(0, violationRate)*float64(sm.Points))), sm.Points)
-	sm.Detail = fmt.Sprintf("%d dependency violation(s) in %d layered files (%.0f%% clean)",
-		violations, totalChecked, violationRate*100)
-	return sm
+	rate := max(0, 1.0-float64(violations)/float64(totalChecked))
+	return rate, violations, totalChecked
+}
+
+// scoreImportGraph computes a 0.0-1.0 score from import graph signals.
+func scoreImportGraph(graph *ImportGraph, profile *domain.ScoringProfile) float64 {
+	if graph == nil || len(graph.Packages) <= 1 {
+		return 1.0
+	}
+
+	cycleW := profile.CyclePenaltyWeight
+	if cycleW <= 0 {
+		cycleW = 0.40
+	}
+	distW := (1.0 - cycleW) * 0.60
+	coupW := (1.0 - cycleW) * 0.40
+
+	// 1. Cycle penalty: any cycles → cycleScore = 0.
+	cycles := graph.DetectCycles()
+	cycleScore := 1.0
+	if len(cycles) > 0 {
+		cycleScore = 0.0
+	}
+
+	// 2. Distance from main sequence.
+	maxDist := profile.MaxDistanceFromMain
+	if maxDist <= 0 {
+		maxDist = 0.40
+	}
+	avgDist := graph.AverageDistance()
+	distScore := 1.0
+	if avgDist > maxDist {
+		distScore = max(0, 1.0-(avgDist-maxDist)/(maxDist*2))
+	}
+
+	// 3. Coupling outliers.
+	multiplier := profile.CouplingOutlierMultiplier
+	if multiplier <= 0 {
+		multiplier = 2.0
+	}
+	outliers := graph.CouplingOutliers(multiplier)
+	couplingScore := 1.0
+	if len(graph.Packages) > 0 {
+		couplingScore = 1.0 - float64(len(outliers))/float64(len(graph.Packages))
+	}
+
+	return cycleScore*cycleW + distScore*distW + couplingScore*coupW
+}
+
+// formatDependencyDetail produces human-readable detail for the dependency_direction sub-metric.
+func formatDependencyDetail(violations, totalChecked int, graph *ImportGraph, graphScore float64) string {
+	parts := []string{}
+	if totalChecked > 0 {
+		rate := max(0, 1.0-float64(violations)/float64(totalChecked))
+		parts = append(parts, fmt.Sprintf("%d violation(s) in %d layered files (%.0f%% clean)",
+			violations, totalChecked, rate*100))
+	}
+	if graph != nil && len(graph.Packages) > 1 {
+		cycles := graph.DetectCycles()
+		parts = append(parts, fmt.Sprintf("graph: %d pkgs, %d cycles, score=%.0f%%",
+			len(graph.Packages), len(cycles), graphScore*100))
+	}
+	if len(parts) == 0 {
+		return "no layered files or import graph to evaluate"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func jaccard(a, b map[string]bool) float64 {
@@ -382,13 +477,18 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 				continue
 			}
 			if WordCountScore(fn.Name) < minWCS {
+				wc := WordCount(fn.Name)
+				msg := fmt.Sprintf("exported function %q has a single-word name; consider a verb+noun pattern", fn.Name)
+				if wc > 1 {
+					msg = fmt.Sprintf("exported function %q has %d words; consider a shorter verb+noun pattern", fn.Name, wc)
+				}
 				issues = append(issues, domain.Issue{
 					Severity:  domain.SeverityInfo,
 					Category:  "discoverability",
 					SubMetric: "naming_uniqueness",
 					File:      af.Path,
 					Line:      fn.LineStart,
-					Message:   fmt.Sprintf("exported function %q has a single-word name; consider a verb+noun pattern", fn.Name),
+					Message:   msg,
 				})
 			}
 		}
@@ -421,7 +521,7 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 				if af, ok := analyzed[f]; ok && af.IsGenerated {
 					continue
 				}
-				isSuffixed := strings.Contains(name, "_")
+				isSuffixed := hasKnownSuffix(name, profile.ExpectedFileSuffixes)
 				if c.dominantIsSuffixed && !isSuffixed {
 					issues = append(issues, domain.Issue{
 						Severity:  fileSev,
@@ -496,10 +596,10 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 			if !ok {
 				continue
 			}
-			layer := fileLayer(f)
+			layer := fileLayer(f, profile)
 			for _, imp := range af.Imports {
-				if violatesDependencyDirection(layer, imp) {
-					impLayer := importLayer(imp)
+				if violatesDependencyDirection(layer, imp, profile) {
+					impLayer := importLayer(imp, profile)
 					pat := layer + "→" + impLayer
 					issues = append(issues, domain.Issue{
 						Severity:  domain.SeverityError,
@@ -514,17 +614,46 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 		}
 	}
 
-	// 5. Symbol collision: flag exported names appearing in 2+ packages.
+	// 5. Import graph: cycles and coupling outliers.
+	if scan != nil && scan.ModulePath != "" {
+		graph := BuildImportGraph(scan.ModulePath, analyzed)
+		if graph != nil {
+			for _, cycle := range graph.DetectCycles() {
+				issues = append(issues, domain.Issue{
+					Severity:  domain.SeverityError,
+					Category:  "discoverability",
+					SubMetric: "dependency_direction",
+					Message:   fmt.Sprintf("import cycle: %s", strings.Join(cycle, " → ")),
+					Pattern:   "import-cycle",
+				})
+			}
+			multiplier := profile.CouplingOutlierMultiplier
+			if multiplier <= 0 {
+				multiplier = 2.0
+			}
+			for _, outlier := range graph.CouplingOutliers(multiplier) {
+				issues = append(issues, domain.Issue{
+					Severity:  domain.SeverityWarning,
+					Category:  "discoverability",
+					SubMetric: "dependency_direction",
+					Message:   fmt.Sprintf("package %q imports %d internal packages (median is %.0f)", outlier.Package, outlier.Ce, outlier.MedianCe),
+					Pattern:   "coupling-outlier",
+				})
+			}
+		}
+	}
+
+	// 6. Symbol collision: flag exported names appearing in 2+ packages.
 	type collisionInfo struct {
 		packages map[string]bool
 	}
 	collisionMap := make(map[string]*collisionInfo)
 	for _, af := range analyzed {
-		if af.IsGenerated {
+		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
 			continue
 		}
 		for _, fn := range af.Functions {
-			if !fn.Exported {
+			if !fn.Exported || fn.Receiver != "" {
 				continue
 			}
 			ci, ok := collisionMap[fn.Name]
@@ -576,7 +705,7 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 			continue
 		}
 		for _, fn := range af.Functions {
-			if !fn.Exported || len(fn.Params) < 2 {
+			if !fn.Exported || fn.Receiver != "" || len(fn.Params) < 2 {
 				continue
 			}
 			allSingleLetter := true
@@ -600,6 +729,42 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 	}
 
 	return issues
+}
+
+// platformBuildTags are Go platform-specific build constraint suffixes that should
+// not be treated as naming convention suffixes.
+var platformBuildTags = map[string]bool{
+	"_darwin": true, "_linux": true, "_windows": true,
+	"_amd64": true, "_arm64": true, "_386": true,
+	"_unix": true, "_freebsd": true, "_netbsd": true,
+	"_openbsd": true, "_dragonfly": true, "_solaris": true,
+	"_plan9": true, "_wasm": true, "_js": true,
+	"_wasip1": true, "_ios": true, "_android": true,
+	"_mips": true, "_mips64": true, "_ppc64": true,
+	"_riscv64": true, "_s390x": true, "_loong64": true,
+}
+
+// hasKnownSuffix checks if a filename (without .go extension) has a recognized
+// role suffix from the expected suffixes list, after stripping platform build tags.
+func hasKnownSuffix(name string, expectedSuffixes []string) bool {
+	// Strip platform build tags first.
+	for tag := range platformBuildTags {
+		if strings.HasSuffix(name, tag) {
+			name = strings.TrimSuffix(name, tag)
+			break
+		}
+	}
+	idx := strings.LastIndex(name, "_")
+	if idx < 0 {
+		return false
+	}
+	suffix := name[idx:]
+	for _, expected := range expectedSuffixes {
+		if suffix == expected {
+			return true
+		}
+	}
+	return false
 }
 
 // fileClassification holds the result of classifying Go files by naming convention.
@@ -627,7 +792,7 @@ func classifyFileNaming(profile *domain.ScoringProfile, goFiles []string, analyz
 			continue
 		}
 		c.total++
-		if strings.Contains(name, "_") {
+		if hasKnownSuffix(name, profile.ExpectedFileSuffixes) {
 			c.suffixed++
 		} else {
 			c.bare++
