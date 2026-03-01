@@ -18,6 +18,9 @@ var skipDirs = map[string]bool{
 	"testdata":     true,
 	"examples":     true,
 	"example":      true,
+	"demos":        true,
+	"demo":         true,
+	"benchmarks":   true,
 }
 
 // FileScanner implements domain.ProjectScanner by walking the filesystem.
@@ -49,7 +52,11 @@ func (s *FileScanner) Scan(projectPath string, excludePaths ...string) (*domain.
 		}
 
 		if d.IsDir() {
-			if skipDirs[d.Name()] || extraSkip[d.Name()] {
+			name := d.Name()
+			// Skip known non-source directories, user-excluded paths, and
+			// underscore-prefixed dirs (Go convention: ignored by toolchain).
+			if skipDirs[name] || extraSkip[name] ||
+				(strings.HasPrefix(name, "_") && name != "_internal") {
 				return filepath.SkipDir
 			}
 			// Skip worktree directories nested under other dirs (e.g. .claude/worktrees)

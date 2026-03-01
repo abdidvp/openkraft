@@ -22,9 +22,15 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 		Weight: 0.20,
 	}
 
+	// Classify file naming once and reuse across sub-metrics and issue collection.
+	var fc fileClassification
+	if scan != nil && len(scan.GoFiles) > 0 {
+		fc = classifyFileNaming(profile, scan.GoFiles, analyzed)
+	}
+
 	sm1 := scoreNamingUniqueness(profile, analyzed)
-	sm2 := scoreFileNamingConventions(profile, scan, analyzed)
-	sm3 := scorePredictableStructure(profile, modules, scan, analyzed)
+	sm2 := scoreFileNamingConventions(profile, scan, &fc)
+	sm3 := scorePredictableStructure(profile, modules, &fc)
 	sm4 := scoreDiscoverabilityDependencyDirection(profile, modules, scan, analyzed)
 
 	cat.SubMetrics = []domain.SubMetric{sm1, sm2, sm3, sm4}
@@ -34,7 +40,7 @@ func ScoreDiscoverability(profile *domain.ScoringProfile, modules []domain.Detec
 		base += sm.Score
 	}
 
-	cat.Issues = collectDiscoverabilityIssues(profile, modules, scan, analyzed)
+	cat.Issues = collectDiscoverabilityIssues(profile, modules, scan, analyzed, &fc)
 
 	funcCount := countExportedFunctions(analyzed)
 	if funcCount > 0 {
@@ -107,25 +113,22 @@ func scoreNamingUniqueness(profile *domain.ScoringProfile, analyzed map[string]*
 // scoreFileNamingConventions (25 pts): measures internal naming consistency.
 // Respects profile.NamingConvention: "bare" or "suffixed" enforces that pattern;
 // "auto" (default) detects the dominant pattern and scores consistency.
-func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+func scoreFileNamingConventions(profile *domain.ScoringProfile, scan *domain.ScanResult, fc *fileClassification) domain.SubMetric {
 	sm := domain.SubMetric{Name: "file_naming_conventions", Points: 25}
 
-	if scan == nil || len(scan.GoFiles) == 0 {
-		sm.Detail = "no Go files to evaluate"
-		return sm
-	}
-
-	c := classifyFileNaming(profile, scan.GoFiles, analyzed)
-	if c.total == 0 {
+	if fc == nil || fc.total == 0 {
 		sm.Detail = "no scorable files"
 		return sm
 	}
 
+	c := *fc
 	consistency := c.consistency
 	patternName := "bare"
 	if c.dominantIsSuffixed {
 		patternName = "suffixed"
-		consistency = (c.consistency + suffixReuse(scan.GoFiles, profile.ExpectedFileSuffixes)) / 2.0
+		if scan != nil {
+			consistency = (c.consistency + suffixReuse(scan.GoFiles, profile.ExpectedFileSuffixes)) / 2.0
+		}
 	}
 
 	sm.Score = min(int(math.Round(consistency*float64(sm.Points))), sm.Points)
@@ -172,7 +175,7 @@ func suffixReuse(goFiles []string, expectedSuffixes []string) float64 {
 //   - Suffix Jaccard (30%): Jaccard of role-indicating file suffixes across modules.
 //     When naming convention is "bare", suffix Jaccard is replaced with full credit.
 //   - File count similarity (20%): min(a,b)/max(a,b) averaged across pairs.
-func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) domain.SubMetric {
+func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.DetectedModule, fc *fileClassification) domain.SubMetric {
 	sm := domain.SubMetric{Name: "predictable_structure", Points: 25}
 
 	if len(modules) <= 1 {
@@ -185,11 +188,10 @@ func scorePredictableStructure(profile *domain.ScoringProfile, modules []domain.
 		return sm
 	}
 
-	// Detect naming convention via shared classifier.
+	// Detect naming convention from pre-computed classification.
 	isBareNaming := false
-	if scan != nil {
-		c := classifyFileNaming(profile, scan.GoFiles, analyzed)
-		isBareNaming = !c.dominantIsSuffixed
+	if fc != nil && fc.total > 0 {
+		isBareNaming = !fc.dominantIsSuffixed
 	} else if profile.NamingConvention == "bare" {
 		isBareNaming = true
 	}
@@ -456,7 +458,7 @@ func countExportedFunctions(analyzed map[string]*domain.AnalyzedFile) int {
 	return count
 }
 
-func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile) []domain.Issue {
+func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []domain.DetectedModule, scan *domain.ScanResult, analyzed map[string]*domain.AnalyzedFile, fc *fileClassification) []domain.Issue {
 	var issues []domain.Issue
 
 	// 1. naming_uniqueness: flag exported single-word functions (WCS < threshold).
@@ -501,9 +503,9 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 	if consistencyThreshold <= 0 {
 		consistencyThreshold = 0.60
 	}
-	if scan != nil && len(scan.GoFiles) > 0 {
-		c := classifyFileNaming(profile, scan.GoFiles, analyzed)
-		if c.total > 0 && c.consistency >= consistencyThreshold {
+	if fc != nil && fc.total > 0 && scan != nil && len(scan.GoFiles) > 0 {
+		c := *fc
+		if c.consistency >= consistencyThreshold {
 			// Severity based on how inconsistent the project is.
 			fileSev := domain.SeverityInfo
 			if c.consistency < 0.40 {
@@ -699,13 +701,16 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 	}
 
 	// 7. Param name quality: flag exported functions where all params are single-letter
-	//    and param count >= 2.
+	//    and param count >= 2. Skip idiomatic Go param patterns.
 	for _, af := range analyzed {
 		if af.IsGenerated || strings.HasSuffix(af.Path, "_test.go") {
 			continue
 		}
 		for _, fn := range af.Functions {
 			if !fn.Exported || fn.Receiver != "" || len(fn.Params) < 2 {
+				continue
+			}
+			if isIdiomaticParamSignature(fn.Params) {
 				continue
 			}
 			allSingleLetter := true
@@ -729,6 +734,49 @@ func collectDiscoverabilityIssues(profile *domain.ScoringProfile, modules []doma
 	}
 
 	return issues
+}
+
+// idiomaticParamSets are well-known single-letter parameter combinations that are
+// universally accepted in Go. Matching is order-independent: {w, r} matches
+// regardless of parameter order. This avoids false positives on standard patterns
+// like ServeHTTP(w, r), sort.Interface(i, j), map iteration (k, v), etc.
+var idiomaticParamSets = []map[string]bool{
+	{"w": true, "r": true},             // http: ResponseWriter, *Request
+	{"i": true, "j": true},             // sort: Less(i, j), Swap(i, j)
+	{"k": true, "v": true},             // map iteration, key-value pairs
+	{"x": true, "y": true},             // coordinates, comparison
+	{"a": true, "b": true},             // comparison, merge
+	{"p": true, "q": true},             // pointer pairs, math
+	{"n": true, "m": true},             // dimensions, counts
+	{"r": true, "g": true, "b": true},  // color components
+}
+
+// isIdiomaticParamSignature returns true if all parameter names form a well-known
+// idiomatic Go combination. Only checks single-letter names.
+func isIdiomaticParamSignature(params []domain.Param) bool {
+	names := make(map[string]bool, len(params))
+	for _, p := range params {
+		if len(p.Name) != 1 {
+			return false // not all single-letter — this function only handles all-single-letter case
+		}
+		names[p.Name] = true
+	}
+	for _, set := range idiomaticParamSets {
+		if len(names) != len(set) {
+			continue
+		}
+		match := true
+		for name := range names {
+			if !set[name] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // platformBuildTags are Go platform-specific build constraint suffixes that should

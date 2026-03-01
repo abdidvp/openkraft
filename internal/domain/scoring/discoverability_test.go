@@ -1030,7 +1030,7 @@ func TestScoreDiscoverability_TopLevelFuncParamsStillFlagged(t *testing.T) {
 			Package: "math",
 			Functions: []domain.Function{
 				{Name: "Add", Exported: true, LineStart: 1,
-					Params: []domain.Param{{Name: "a", Type: "int"}, {Name: "b", Type: "int"}}},
+					Params: []domain.Param{{Name: "s", Type: "int"}, {Name: "t", Type: "int"}}},
 			},
 		},
 	}
@@ -1043,7 +1043,7 @@ func TestScoreDiscoverability_TopLevelFuncParamsStillFlagged(t *testing.T) {
 			paramIssues = append(paramIssues, iss)
 		}
 	}
-	require.Len(t, paramIssues, 1, "top-level Add(a, b) should still be flagged")
+	require.Len(t, paramIssues, 1, "top-level Add(s, t) should still be flagged")
 	assert.Contains(t, paramIssues[0].Message, "Add")
 }
 
